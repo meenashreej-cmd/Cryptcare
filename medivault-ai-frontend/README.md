@@ -1,4 +1,4 @@
-# MediVault AI – Patient Sovereign Prescription Intelligence Network
+# CRYPTCARE – Patient Sovereign Prescription Intelligence Network
 
 A healthcare cybersecurity SaaS dashboard concept covering 6 roles
 (Patient, Doctor, Nurse, Pharmacist, Insurance Provider, System Admin),
