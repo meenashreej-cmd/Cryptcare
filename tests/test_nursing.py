@@ -1,4 +1,4 @@
-"""
+﻿"""
 Phase 6 — Nurse role & vital signs.
 
 Follows the same db-fixture + direct-token pattern as
@@ -58,8 +58,8 @@ def test_nurse_role_appears_in_role_permissions():
 
 
 def test_nurse_blocked_from_recording_vitals_without_consent(client, db):
-    patient_user, patient_profile = _make_user(db, "vitals_patient_1@medivault.ai", RoleEnum.PATIENT)
-    nurse_user, _ = _make_user(db, "vitals_nurse_1@medivault.ai", RoleEnum.NURSE)
+    patient_user, patient_profile = _make_user(db, "vitals_patient_1@cryptcare.ai", RoleEnum.PATIENT)
+    nurse_user, _ = _make_user(db, "vitals_nurse_1@cryptcare.ai", RoleEnum.NURSE)
     nurse_headers = _auth_header(nurse_user.user_id, RoleEnum.NURSE)
 
     resp = client.post(
@@ -72,8 +72,8 @@ def test_nurse_blocked_from_recording_vitals_without_consent(client, db):
 
 
 def test_nurse_records_vitals_after_consent_flow(client, db):
-    patient_user, patient_profile = _make_user(db, "vitals_patient_2@medivault.ai", RoleEnum.PATIENT)
-    nurse_user, _ = _make_user(db, "vitals_nurse_2@medivault.ai", RoleEnum.NURSE)
+    patient_user, patient_profile = _make_user(db, "vitals_patient_2@cryptcare.ai", RoleEnum.PATIENT)
+    nurse_user, _ = _make_user(db, "vitals_nurse_2@cryptcare.ai", RoleEnum.NURSE)
     patient_headers = _auth_header(patient_user.user_id, RoleEnum.PATIENT)
     nurse_headers = _auth_header(nurse_user.user_id, RoleEnum.NURSE)
 
@@ -129,8 +129,8 @@ def test_non_nurse_role_cannot_record_vitals_even_with_consent(client, db):
     """A DOCTOR with an active BOTH-permission vitals grant still can't hit
     the nurse-only write path — role check inside nursing_service.record_vitals
     is a second, independent gate on top of the consent check."""
-    patient_user, patient_profile = _make_user(db, "vitals_patient_3@medivault.ai", RoleEnum.PATIENT)
-    doctor_user, _ = _make_user(db, "vitals_doctor_3@medivault.ai", RoleEnum.DOCTOR)
+    patient_user, patient_profile = _make_user(db, "vitals_patient_3@cryptcare.ai", RoleEnum.PATIENT)
+    doctor_user, _ = _make_user(db, "vitals_doctor_3@cryptcare.ai", RoleEnum.DOCTOR)
     patient_headers = _auth_header(patient_user.user_id, RoleEnum.PATIENT)
     doctor_headers = _auth_header(doctor_user.user_id, RoleEnum.DOCTOR)
 
@@ -152,8 +152,8 @@ def test_non_nurse_role_cannot_record_vitals_even_with_consent(client, db):
 
 
 def test_negative_vitals_blocked(client, db):
-    patient_user, patient_profile = _make_user(db, "vitals_patient_4@medivault.ai", RoleEnum.PATIENT)
-    nurse_user, _ = _make_user(db, "vitals_nurse_4@medivault.ai", RoleEnum.NURSE)
+    patient_user, patient_profile = _make_user(db, "vitals_patient_4@cryptcare.ai", RoleEnum.PATIENT)
+    nurse_user, _ = _make_user(db, "vitals_nurse_4@cryptcare.ai", RoleEnum.NURSE)
     patient_headers = _auth_header(patient_user.user_id, RoleEnum.PATIENT)
     nurse_headers = _auth_header(nurse_user.user_id, RoleEnum.NURSE)
 
@@ -183,8 +183,8 @@ def test_negative_vitals_blocked(client, db):
 
 
 def test_patient_cannot_access_other_patient_vitals(client, db):
-    patient_a, profile_a = _make_user(db, "vitals_patient_a@medivault.ai", RoleEnum.PATIENT)
-    patient_b, profile_b = _make_user(db, "vitals_patient_b@medivault.ai", RoleEnum.PATIENT)
+    patient_a, profile_a = _make_user(db, "vitals_patient_a@cryptcare.ai", RoleEnum.PATIENT)
+    patient_b, profile_b = _make_user(db, "vitals_patient_b@cryptcare.ai", RoleEnum.PATIENT)
     patient_a_headers = _auth_header(patient_a.user_id, RoleEnum.PATIENT)
 
     resp = client.get(f"/api/v1/nursing/patients/{profile_b.patient_id}/vitals", headers=patient_a_headers)

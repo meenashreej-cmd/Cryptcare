@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+﻿from datetime import date, datetime, timedelta
 
 from app.core.security import create_access_token, hash_password
 from app.models.consent import ConsentRequest, ConsentStatusEnum, GranteeTypeEnum, PermissionEnum, ResourceTypeEnum
@@ -42,15 +42,15 @@ def _grant_doctor_consent(db, patient_id, doctor_user_id):
 
 
 def _setup(db):
-    patient_user = _make_user(db, "bb_patient@medivault.ai", "+9200000001", RoleEnum.PATIENT, "BB Patient")
+    patient_user = _make_user(db, "bb_patient@cryptcare.ai", "+9200000001", RoleEnum.PATIENT, "BB Patient")
     patient_profile = PatientProfile(user_id=patient_user.user_id, blood_group="A+")
     db.add(patient_profile)
     db.flush()
 
-    doctor_user = _make_user(db, "bb_doctor@medivault.ai", "+9200000002", RoleEnum.DOCTOR, "Dr. Transfusion")
+    doctor_user = _make_user(db, "bb_doctor@cryptcare.ai", "+9200000002", RoleEnum.DOCTOR, "Dr. Transfusion")
     db.add(DoctorProfile(user_id=doctor_user.user_id, license_number="DOC-BB-1"))
 
-    bb_user = _make_user(db, "bb_staff@medivault.ai", "+9200000003", RoleEnum.BLOOD_BANK, "City Blood Bank")
+    bb_user = _make_user(db, "bb_staff@cryptcare.ai", "+9200000003", RoleEnum.BLOOD_BANK, "City Blood Bank")
     db.add(BloodBankProfile(user_id=bb_user.user_id, license_number="BB-LIC-1", facility_name="City Blood Bank"))
     db.commit()
 
@@ -171,7 +171,7 @@ def test_reject_request_sets_reason_and_notifies(client, db):
 
 def test_doctor_without_consent_cannot_create_blood_request(client, db):
     ctx = _setup(db)
-    stranger_doctor = _make_user(db, "bb_stranger_doc@medivault.ai", "+9200000004", RoleEnum.DOCTOR, "Dr. Stranger")
+    stranger_doctor = _make_user(db, "bb_stranger_doc@cryptcare.ai", "+9200000004", RoleEnum.DOCTOR, "Dr. Stranger")
     db.add(DoctorProfile(user_id=stranger_doctor.user_id, license_number="DOC-BB-STRANGER"))
     db.commit()
     stranger_headers = get_auth_header(stranger_doctor.user_id, RoleEnum.DOCTOR)
@@ -227,7 +227,7 @@ def test_expired_units_excluded_from_matching(client, db):
 
 def test_patient_cannot_access_other_patient_blood_requests(client, db):
     ctx = _setup(db)
-    stranger_patient_user = _make_user(db, "bb_stranger_patient@medivault.ai", "+9200000099", RoleEnum.PATIENT, "Stranger Patient")
+    stranger_patient_user = _make_user(db, "bb_stranger_patient@cryptcare.ai", "+9200000099", RoleEnum.PATIENT, "Stranger Patient")
     stranger_profile = PatientProfile(user_id=stranger_patient_user.user_id, blood_group="B+")
     db.add(stranger_profile)
     db.commit()

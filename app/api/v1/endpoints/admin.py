@@ -15,8 +15,21 @@ def get_pending_verifications(
     current_user: CurrentUser = Depends(require_role("ADMIN")),
 ):
     """
-    Get a list of users whose accounts are PENDING_VERIFICATION.
-    Returns safe metadata only (no encrypted fields) to help admins find users
-    that need to be verified via the /auth/verify-license endpoint.
+    List users whose accounts are still in PENDING_VERIFICATION status.
+
+    NOTE — Phase 1 license verification is now automatic:
+    When a professional registers, their license_number is matched against
+    the in-process LICENSE_REGISTRY dataset. A valid license sets
+    profile.verified=True immediately at registration time; no admin action
+    is required for those accounts.
+
+    This endpoint (and PUT /auth/verify-license/{user_id}) now serves as a
+    **manual override** for edge cases only — for example:
+      - A professional whose license was recently issued and is not yet in
+        the dataset.
+      - Disputed or flagged accounts that need a human review.
+      - Accounts suspended by the system that an admin wants to reinstate.
+
+    Returns safe metadata only (no encrypted fields).
     """
     return admin_service.get_pending_verifications(db, current_user)

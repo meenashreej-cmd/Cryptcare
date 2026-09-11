@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from datetime import datetime, timedelta
 from app.core.security import create_access_token
 from app.services.auth_service import ROLE_PERMISSIONS
@@ -10,7 +10,7 @@ from app.core.qr import build_prescription_qr_payload
 def setup_users(db):
     # Patient User
     patient_user = User(
-        email="pharm_patient@medivault.ai",
+        email="pharm_patient@cryptcare.ai",
         phone="+9000000001",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.PATIENT,
@@ -24,7 +24,7 @@ def setup_users(db):
 
     # Doctor User
     doctor_user = User(
-        email="pharm_doctor@medivault.ai",
+        email="pharm_doctor@cryptcare.ai",
         phone="+9000000002",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.DOCTOR,
@@ -38,7 +38,7 @@ def setup_users(db):
 
     # Pharmacist User
     pharmacist_user = User(
-        email="pharmacist@medivault.ai",
+        email="pharmacist@cryptcare.ai",
         phone="+9000000003",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.PHARMACIST,

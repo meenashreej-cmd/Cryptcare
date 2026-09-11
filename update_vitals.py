@@ -1,7 +1,7 @@
 import re
 import sys
 
-file_path = r"c:\Users\meena\OneDrive\Desktop\cryptcare\cryptcare\medivault-ai-frontend\src\MediVaultApp.jsx"
+file_path = r"c:\Users\meena\OneDrive\Desktop\cryptcare\cryptcare\cryptcare-frontend\src\CryptCareApp.jsx"
 
 with open(file_path, "r", encoding="utf-8") as f:
     content = f.read()
@@ -92,7 +92,7 @@ new_vitals_management = """const VitalsManagementView = ({ currentUser }) => {
 
 content = content.replace(old_vitals_management, new_vitals_management)
 
-# We also need to export `api` from api.js and import it in MediVaultApp.jsx
+# We also need to export `api` from api.js and import it in CryptCareApp.jsx
 if "import api, { authService" not in content:
     content = content.replace(
         'import { authService, vaultService, consentService, nursingService } from "./api";',
@@ -101,4 +101,4 @@ if "import api, { authService" not in content:
 
 with open(file_path, "w", encoding="utf-8") as f:
     f.write(content)
-print("Updated VitalsManagementView in MediVaultApp.jsx")
+print("Updated VitalsManagementView in CryptCareApp.jsx")

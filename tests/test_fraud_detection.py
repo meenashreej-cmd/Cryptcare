@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+﻿from datetime import datetime, timedelta
 
 from app.core.qr import build_prescription_qr_payload
 from app.core.security import create_access_token, hash_password
@@ -45,14 +45,14 @@ def _grant_doctor_consent(db, patient_id, doctor_user_id):
 
 
 def test_doctor_shopping_alert_fires_across_two_doctors(client, db):
-    patient_user = _make_user(db, "fraud_patient1@medivault.ai", "+9100000001", RoleEnum.PATIENT, "Fraud Patient 1")
+    patient_user = _make_user(db, "fraud_patient1@cryptcare.ai", "+9100000001", RoleEnum.PATIENT, "Fraud Patient 1")
     patient_profile = PatientProfile(user_id=patient_user.user_id)
     db.add(patient_profile)
     db.flush()
 
-    doctor_a = _make_user(db, "fraud_doc_a@medivault.ai", "+9100000002", RoleEnum.DOCTOR, "Dr. A")
+    doctor_a = _make_user(db, "fraud_doc_a@cryptcare.ai", "+9100000002", RoleEnum.DOCTOR, "Dr. A")
     db.add(DoctorProfile(user_id=doctor_a.user_id, license_number="DOC-A"))
-    doctor_b = _make_user(db, "fraud_doc_b@medivault.ai", "+9100000003", RoleEnum.DOCTOR, "Dr. B")
+    doctor_b = _make_user(db, "fraud_doc_b@cryptcare.ai", "+9100000003", RoleEnum.DOCTOR, "Dr. B")
     db.add(DoctorProfile(user_id=doctor_b.user_id, license_number="DOC-B"))
     db.commit()
 
@@ -91,14 +91,14 @@ def test_doctor_shopping_alert_fires_across_two_doctors(client, db):
 
 
 def test_prescription_tampering_alert_after_two_failed_scans(client, db):
-    patient_user = _make_user(db, "fraud_patient2@medivault.ai", "+9100000004", RoleEnum.PATIENT, "Fraud Patient 2")
+    patient_user = _make_user(db, "fraud_patient2@cryptcare.ai", "+9100000004", RoleEnum.PATIENT, "Fraud Patient 2")
     patient_profile = PatientProfile(user_id=patient_user.user_id)
     db.add(patient_profile)
     db.flush()
 
-    doctor = _make_user(db, "fraud_doc2@medivault.ai", "+9100000005", RoleEnum.DOCTOR, "Dr. Tamper")
+    doctor = _make_user(db, "fraud_doc2@cryptcare.ai", "+9100000005", RoleEnum.DOCTOR, "Dr. Tamper")
     db.add(DoctorProfile(user_id=doctor.user_id, license_number="DOC-TAMPER"))
-    pharmacist = _make_user(db, "fraud_pharm2@medivault.ai", "+9100000006", RoleEnum.PHARMACIST, "Ph. Tamper")
+    pharmacist = _make_user(db, "fraud_pharm2@cryptcare.ai", "+9100000006", RoleEnum.PHARMACIST, "Ph. Tamper")
     db.add(PharmacistProfile(user_id=pharmacist.user_id, license_number="PHARM-TAMPER"))
     db.commit()
 
@@ -137,7 +137,7 @@ def test_prescription_tampering_alert_after_two_failed_scans(client, db):
 
 
 def test_break_glass_abuse_flagged_across_three_patients(client, db):
-    doctor = _make_user(db, "fraud_doc3@medivault.ai", "+9100000007", RoleEnum.DOCTOR, "Dr. Breakglass")
+    doctor = _make_user(db, "fraud_doc3@cryptcare.ai", "+9100000007", RoleEnum.DOCTOR, "Dr. Breakglass")
     db.add(DoctorProfile(user_id=doctor.user_id, license_number="DOC-BREAKGLASS"))
     db.commit()
     doctor_headers = get_auth_header(doctor.user_id, RoleEnum.DOCTOR)
@@ -145,7 +145,7 @@ def test_break_glass_abuse_flagged_across_three_patients(client, db):
     patient_ids = []
     patient_headers_list = []
     for i in range(3):
-        patient_user = _make_user(db, f"fraud_bg_patient{i}@medivault.ai", f"+920000000{i}", RoleEnum.PATIENT, f"BG Patient {i}")
+        patient_user = _make_user(db, f"fraud_bg_patient{i}@cryptcare.ai", f"+920000000{i}", RoleEnum.PATIENT, f"BG Patient {i}")
         patient_profile = PatientProfile(user_id=patient_user.user_id)
         db.add(patient_profile)
         db.commit()
@@ -176,16 +176,16 @@ def test_break_glass_abuse_flagged_across_three_patients(client, db):
 
 
 def test_insurer_needs_consent_to_view_alerts_and_can_review(client, db):
-    patient_user = _make_user(db, "fraud_patient4@medivault.ai", "+9100000010", RoleEnum.PATIENT, "Fraud Patient 4")
+    patient_user = _make_user(db, "fraud_patient4@cryptcare.ai", "+9100000010", RoleEnum.PATIENT, "Fraud Patient 4")
     patient_profile = PatientProfile(user_id=patient_user.user_id)
     db.add(patient_profile)
     db.flush()
 
-    doctor_a = _make_user(db, "fraud_doc4a@medivault.ai", "+9100000011", RoleEnum.DOCTOR, "Dr. 4A")
+    doctor_a = _make_user(db, "fraud_doc4a@cryptcare.ai", "+9100000011", RoleEnum.DOCTOR, "Dr. 4A")
     db.add(DoctorProfile(user_id=doctor_a.user_id, license_number="DOC-4A"))
-    doctor_b = _make_user(db, "fraud_doc4b@medivault.ai", "+9100000012", RoleEnum.DOCTOR, "Dr. 4B")
+    doctor_b = _make_user(db, "fraud_doc4b@cryptcare.ai", "+9100000012", RoleEnum.DOCTOR, "Dr. 4B")
     db.add(DoctorProfile(user_id=doctor_b.user_id, license_number="DOC-4B"))
-    insurer_user = _make_user(db, "fraud_insurer4@medivault.ai", "+9100000013", RoleEnum.INSURER, "Insurer 4")
+    insurer_user = _make_user(db, "fraud_insurer4@cryptcare.ai", "+9100000013", RoleEnum.INSURER, "Insurer 4")
     db.add(InsurerProfile(user_id=insurer_user.user_id, license_number="INS-4"))
     db.commit()
 
@@ -242,12 +242,12 @@ def test_insurer_needs_consent_to_view_alerts_and_can_review(client, db):
 
 
 def test_doctor_shopping_boundary_one_doctor_multiple_prescriptions(client, db):
-    patient_user = _make_user(db, "fraud_patient5@medivault.ai", "+9100000015", RoleEnum.PATIENT, "Fraud Patient 5")
+    patient_user = _make_user(db, "fraud_patient5@cryptcare.ai", "+9100000015", RoleEnum.PATIENT, "Fraud Patient 5")
     patient_profile = PatientProfile(user_id=patient_user.user_id)
     db.add(patient_profile)
     db.flush()
 
-    doctor_a = _make_user(db, "fraud_doc5a@medivault.ai", "+9100000016", RoleEnum.DOCTOR, "Dr. 5A")
+    doctor_a = _make_user(db, "fraud_doc5a@cryptcare.ai", "+9100000016", RoleEnum.DOCTOR, "Dr. 5A")
     db.add(DoctorProfile(user_id=doctor_a.user_id, license_number="DOC-5A"))
     db.commit()
 
@@ -272,14 +272,14 @@ def test_doctor_shopping_boundary_one_doctor_multiple_prescriptions(client, db):
 
 
 def test_prescription_tampering_boundary_one_attempt(client, db):
-    patient_user = _make_user(db, "fraud_patient6@medivault.ai", "+9100000017", RoleEnum.PATIENT, "Fraud Patient 6")
+    patient_user = _make_user(db, "fraud_patient6@cryptcare.ai", "+9100000017", RoleEnum.PATIENT, "Fraud Patient 6")
     patient_profile = PatientProfile(user_id=patient_user.user_id)
     db.add(patient_profile)
     db.flush()
 
-    doctor = _make_user(db, "fraud_doc6@medivault.ai", "+9100000018", RoleEnum.DOCTOR, "Dr. 6")
+    doctor = _make_user(db, "fraud_doc6@cryptcare.ai", "+9100000018", RoleEnum.DOCTOR, "Dr. 6")
     db.add(DoctorProfile(user_id=doctor.user_id, license_number="DOC-6"))
-    pharmacist = _make_user(db, "fraud_pharm6@medivault.ai", "+9100000019", RoleEnum.PHARMACIST, "Ph. 6")
+    pharmacist = _make_user(db, "fraud_pharm6@cryptcare.ai", "+9100000019", RoleEnum.PHARMACIST, "Ph. 6")
     db.add(PharmacistProfile(user_id=pharmacist.user_id, license_number="PHARM-6"))
     db.commit()
 
@@ -314,7 +314,7 @@ def test_prescription_tampering_boundary_one_attempt(client, db):
 
 
 def test_break_glass_abuse_boundary_two_patients(client, db):
-    doctor = _make_user(db, "fraud_doc7@medivault.ai", "+9100000020", RoleEnum.DOCTOR, "Dr. 7")
+    doctor = _make_user(db, "fraud_doc7@cryptcare.ai", "+9100000020", RoleEnum.DOCTOR, "Dr. 7")
     db.add(DoctorProfile(user_id=doctor.user_id, license_number="DOC-7"))
     db.commit()
     doctor_headers = get_auth_header(doctor.user_id, RoleEnum.DOCTOR)
@@ -323,7 +323,7 @@ def test_break_glass_abuse_boundary_two_patients(client, db):
     patient_headers_list = []
     # Only 2 patients (below threshold)
     for i in range(2):
-        patient_user = _make_user(db, f"fraud_bg_patient_b{i}@medivault.ai", f"+920000001{i}", RoleEnum.PATIENT, f"BG Patient B{i}")
+        patient_user = _make_user(db, f"fraud_bg_patient_b{i}@cryptcare.ai", f"+920000001{i}", RoleEnum.PATIENT, f"BG Patient B{i}")
         patient_profile = PatientProfile(user_id=patient_user.user_id)
         db.add(patient_profile)
         db.commit()

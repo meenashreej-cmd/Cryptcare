@@ -14,7 +14,7 @@ class RegisterRequest(BaseModel):
     role: RoleEnum
 
     # Patient-only fields
-    dob: Optional[str] = None
+    dob: Optional[date] = None
     gender: Optional[str] = None
     blood_group: Optional[str] = None
 
@@ -46,9 +46,13 @@ class RegisterRequest(BaseModel):
 class RegisterResponse(BaseModel):
     user_id: str
     status: UserStatusEnum
-    # Only present for MFA-required roles (DOCTOR/PHARMACIST/ADMIN), and only
-    # ever returned on this one response — scan it into an authenticator app
-    # now (Google Authenticator, Authy, etc.); it cannot be retrieved again.
+    # True when the submitted license_number was found in the licensing
+    # registry and the professional profile has been pre-verified.
+    # Always False for PATIENT and ADMIN (no license required).
+    license_verified: bool = False
+    # Only present for MFA-required roles (DOCTOR/NURSE/PHARMACIST/ADMIN),
+    # and only ever returned on this one response — scan it into an
+    # authenticator app now; it cannot be retrieved again.
     mfa_provisioning_uri: Optional[str] = None
 
 

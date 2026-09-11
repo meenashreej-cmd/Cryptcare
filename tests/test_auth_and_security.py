@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from app.core.encryption import encrypt, decrypt
 from app.core.security import (
     create_access_token,
@@ -35,7 +35,7 @@ def test_password_hashing():
 def test_auth_registration_otp_and_login(client):
     # 1. Register Patient
     patient_payload = {
-        "email": "testpatient@medivault.ai",
+        "email": "testpatient@cryptcare.ai",
         "phone": "+1234567890",
         "password": "Password123!",
         "full_name": "Test Patient",
@@ -59,7 +59,7 @@ def test_auth_registration_otp_and_login(client):
 
     # 3. Login Patient
     login_payload = {
-        "email": "testpatient@medivault.ai",
+        "email": "testpatient@cryptcare.ai",
         "password": "Password123!"
     }
     response = client.post("/api/v1/auth/login", json=login_payload)

@@ -1,4 +1,4 @@
-from app.core.qr import build_emergency_qr_payload, parse_emergency_qr_payload
+﻿from app.core.qr import build_emergency_qr_payload, parse_emergency_qr_payload
 from app.core.security import create_access_token, hash_password
 from app.models.user import DoctorProfile, PatientProfile, RoleEnum, User, UserStatusEnum
 from app.models.vault import SeverityEnum
@@ -35,7 +35,7 @@ def test_qr_payload_helpers_roundtrip():
 
 
 def test_emergency_qr_lifecycle_and_public_scan(client, db):
-    patient_user, patient_profile = _make_patient(db, "emerg_patient1@medivault.ai", "+9300000001", "Emergency Patient 1")
+    patient_user, patient_profile = _make_patient(db, "emerg_patient1@cryptcare.ai", "+9300000001", "Emergency Patient 1")
     patient_headers = get_auth_header(patient_user.user_id, RoleEnum.PATIENT)
 
     # No token yet
@@ -61,7 +61,7 @@ def test_emergency_qr_lifecycle_and_public_scan(client, db):
 
     # Doctor prescribes an active medication
     doctor_user = User(
-        email="emerg_doc1@medivault.ai",
+        email="emerg_doc1@cryptcare.ai",
         phone="+9300000002",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.DOCTOR,
@@ -194,7 +194,7 @@ def test_emergency_access_invalid_token_is_denied_and_logged(client, db):
 
 def test_only_patient_can_manage_own_emergency_qr(client, db):
     doctor_user = User(
-        email="emerg_doc2@medivault.ai",
+        email="emerg_doc2@cryptcare.ai",
         phone="+9300000003",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.DOCTOR,
@@ -213,10 +213,10 @@ def test_only_patient_can_manage_own_emergency_qr(client, db):
 
 def test_break_glass_expiration_blocks_access(client, db):
     # Test that Break-Glass consent grants expire after their window and subsequent access is blocked.
-    patient_user, patient_profile = _make_patient(db, "bg_expire@medivault.ai", "+9300000004", "BG Expire Patient")
+    patient_user, patient_profile = _make_patient(db, "bg_expire@cryptcare.ai", "+9300000004", "BG Expire Patient")
     
     doctor_user = User(
-        email="bg_expire_doc@medivault.ai",
+        email="bg_expire_doc@cryptcare.ai",
         phone="+9300000005",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.DOCTOR,

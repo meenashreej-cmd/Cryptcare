@@ -1,4 +1,4 @@
-"""
+﻿"""
 Phase 5 hardening — rate limiting middleware.
 
 Uses the general/default limit rather than the tighter login-specific one so
@@ -42,7 +42,7 @@ def test_requests_beyond_limit_are_throttled(client):
 def test_login_endpoint_has_its_own_tighter_limit(client):
     assert settings.RATE_LIMIT_LOGIN_MAX <= settings.RATE_LIMIT_DEFAULT_MAX
 
-    bad_login = {"email": "nobody@medivault.ai", "password": "wrong"}
+    bad_login = {"email": "nobody@cryptcare.ai", "password": "wrong"}
     for _ in range(settings.RATE_LIMIT_LOGIN_MAX):
         resp = client.post("/api/v1/auth/login", json=bad_login)
         assert resp.status_code == 401  # wrong credentials, but not yet throttled
@@ -53,7 +53,7 @@ def test_login_endpoint_has_its_own_tighter_limit(client):
 
 def test_rate_limit_state_is_isolated_per_path(client):
     for _ in range(settings.RATE_LIMIT_LOGIN_MAX):
-        client.post("/api/v1/auth/login", json={"email": "nobody@medivault.ai", "password": "wrong"})
+        client.post("/api/v1/auth/login", json={"email": "nobody@cryptcare.ai", "password": "wrong"})
 
     # /health uses the separate default bucket, so it should be unaffected
     # by /auth/login having just been exhausted.

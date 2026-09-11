@@ -1,4 +1,4 @@
-"""
+﻿"""
 Phase 7 — Clinical Safety Validation.
 
 Uses the same db-fixture + direct-token pattern as tests/test_nursing.py.
@@ -76,8 +76,8 @@ def _grant_prescription_consent(client, patient_headers, doctor_headers, patient
 
 
 def _setup_patient_and_doctor(db, client, suffix):
-    patient_user, patient_profile = _make_user(db, f"safety_patient_{suffix}@medivault.ai", RoleEnum.PATIENT)
-    doctor_user, _ = _make_user(db, f"safety_doctor_{suffix}@medivault.ai", RoleEnum.DOCTOR)
+    patient_user, patient_profile = _make_user(db, f"safety_patient_{suffix}@cryptcare.ai", RoleEnum.PATIENT)
+    doctor_user, _ = _make_user(db, f"safety_doctor_{suffix}@cryptcare.ai", RoleEnum.DOCTOR)
     patient_headers = _auth_header(patient_user.user_id, RoleEnum.PATIENT)
     doctor_headers = _auth_header(doctor_user.user_id, RoleEnum.DOCTOR)
     _grant_prescription_consent(client, patient_headers, doctor_headers, patient_profile.patient_id)

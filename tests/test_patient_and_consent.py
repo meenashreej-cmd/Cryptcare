@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from app.core.security import create_access_token
 from app.services.auth_service import ROLE_PERMISSIONS
 from app.models.user import RoleEnum, User, PatientProfile, DoctorProfile, UserStatusEnum
@@ -7,7 +7,7 @@ from app.core.security import hash_password
 def setup_users(db):
     # Patient User
     patient_user = User(
-        email="patient@medivault.ai",
+        email="patient@cryptcare.ai",
         phone="+1111111111",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.PATIENT,
@@ -21,7 +21,7 @@ def setup_users(db):
 
     # Caregiver User
     caregiver_user = User(
-        email="caregiver@medivault.ai",
+        email="caregiver@cryptcare.ai",
         phone="+3333333333",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.PATIENT,
@@ -32,7 +32,7 @@ def setup_users(db):
 
     # Doctor User
     doctor_user = User(
-        email="doctor@medivault.ai",
+        email="doctor@cryptcare.ai",
         phone="+2222222222",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.DOCTOR,

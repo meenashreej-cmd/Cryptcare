@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.encryption import decrypt as decrypt_field
 from app.core.encryption import encrypt as encrypt_field
+from app.core.license_verification import verify_license_or_raise
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -82,7 +83,7 @@ def _build_mfa_provisioning_uri(email: str, secret: str) -> str:
     return pyotp.TOTP(secret).provisioning_uri(name=email, issuer_name=settings.MFA_ISSUER_NAME)
 
 
-def register_user(db: Session, payload: RegisterRequest) -> tuple[User, str | None]:
+def register_user(db: Session, payload: RegisterRequest) -> tuple[User, str | None, bool]:
     existing = db.query(User).filter(
         (User.email == payload.email) | (User.phone == payload.phone)
     ).first()
@@ -91,6 +92,12 @@ def register_user(db: Session, payload: RegisterRequest) -> tuple[User, str | No
             status_code=status.HTTP_409_CONFLICT,
             detail="An account with this email or phone already exists",
         )
+
+    # ------------------------------------------------------------------ #
+    # License check — runs before any DB writes so an invalid license is  #
+    # rejected cleanly with HTTP 422. For PATIENT/ADMIN this is a no-op.  #
+    # ------------------------------------------------------------------ #
+    verify_license_or_raise(payload.role, payload.license_number or "")
 
     mfa_required = payload.role in (RoleEnum.DOCTOR, RoleEnum.NURSE, RoleEnum.PHARMACIST, RoleEnum.ADMIN)
 
@@ -113,10 +120,11 @@ def register_user(db: Session, payload: RegisterRequest) -> tuple[User, str | No
     db.add(user)
     db.flush()  # get user.user_id before commit
 
-    # Each branch is responsible ONLY for building the role-specific profile
-    # row — NOT for deciding whether to send an OTP. That decision is made
-    # once, in a single place below, so it can't silently be skipped for a
-    # role the way it previously was for DOCTOR/LAB/PHARMACIST/INSURER.
+    # Each branch builds the role-specific profile row.
+    # Professional profiles are set verified=True immediately because
+    # verify_license_or_raise() above already confirmed the license exists
+    # in the registry — no separate admin approval step is needed.
+    license_verified = False
     if payload.role == RoleEnum.PATIENT:
         db.add(PatientProfile(
             user_id=user.user_id,
@@ -130,38 +138,50 @@ def register_user(db: Session, payload: RegisterRequest) -> tuple[User, str | No
             license_number=payload.license_number,
             specialization=payload.specialization,
             hospital_name=payload.hospital_name,
+            verified=True,
         ))
+        license_verified = True
     elif payload.role == RoleEnum.NURSE:
         db.add(NurseProfile(
             user_id=user.user_id,
             license_number=payload.license_number,
             hospital_name=payload.hospital_name,
             department=payload.department,
+            verified=True,
         ))
+        license_verified = True
     elif payload.role == RoleEnum.LAB:
         db.add(LabProfile(
             user_id=user.user_id,
             license_number=payload.license_number,
             lab_name=payload.organization_name,
+            verified=True,
         ))
+        license_verified = True
     elif payload.role == RoleEnum.PHARMACIST:
         db.add(PharmacistProfile(
             user_id=user.user_id,
             license_number=payload.license_number,
             pharmacy_name=payload.organization_name,
+            verified=True,
         ))
+        license_verified = True
     elif payload.role == RoleEnum.INSURER:
         db.add(InsurerProfile(
             user_id=user.user_id,
             license_number=payload.license_number,
             company_name=payload.organization_name,
+            verified=True,
         ))
+        license_verified = True
     elif payload.role == RoleEnum.BLOOD_BANK:
         db.add(BloodBankProfile(
             user_id=user.user_id,
             license_number=payload.license_number,
             facility_name=payload.organization_name,
+            verified=True,
         ))
+        license_verified = True
     # ADMIN accounts are provisioned out-of-band, not via public self-registration —
     # no profile row is created here and (below) no OTP is sent for this role.
 
@@ -183,7 +203,7 @@ def register_user(db: Session, payload: RegisterRequest) -> tuple[User, str | No
     mfa_provisioning_uri = (
         _build_mfa_provisioning_uri(user.email, raw_mfa_secret) if raw_mfa_secret else None
     )
-    return user, mfa_provisioning_uri
+    return user, mfa_provisioning_uri, license_verified
 
 
 def _send_otp(user: User) -> None:
@@ -221,7 +241,7 @@ def _dispatch_otp_email(to_email: str, full_name: str, otp: str) -> None:
         f"-- The CryptCare Team"
     )
 
-    # HTML body - styled to match the MediVault brand palette
+    # HTML body - styled to match the CryptCare brand palette
     html_body = f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -237,7 +257,7 @@ def _dispatch_otp_email(to_email: str, full_name: str, otp: str) -> None:
             <span style="font-size:28px;">&#x1F510;</span>
             <h1 style="margin:8px 0 0;color:#ffffff;font-size:20px;font-weight:700;
                        font-family:'Sora',Arial,sans-serif;letter-spacing:-0.3px;">
-              MediVault AI
+              CryptCare
             </h1>
             <p style="margin:4px 0 0;color:rgba(255,255,255,0.75);font-size:11px;
                       font-family:'JetBrains Mono',monospace;letter-spacing:0.06em;">

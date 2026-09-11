@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from datetime import datetime, timedelta
 from app.core.security import create_access_token
 from app.services.auth_service import ROLE_PERMISSIONS
@@ -9,7 +9,7 @@ from app.models.consent import ConsentRequest, ConsentStatusEnum, GranteeTypeEnu
 def setup_doctor_and_patient(db):
     # Patient User
     patient_user = User(
-        email="rx_patient@medivault.ai",
+        email="rx_patient@cryptcare.ai",
         phone="+1000000001",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.PATIENT,
@@ -23,7 +23,7 @@ def setup_doctor_and_patient(db):
 
     # Doctor User
     doctor_user = User(
-        email="rx_doctor@medivault.ai",
+        email="rx_doctor@cryptcare.ai",
         phone="+2000000002",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.DOCTOR,

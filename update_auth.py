@@ -1,7 +1,7 @@
 import re
 import sys
 
-file_path = r"c:\Users\meena\OneDrive\Desktop\cryptcare\cryptcare\medivault-ai-frontend\src\MediVaultApp.jsx"
+file_path = r"c:\Users\meena\OneDrive\Desktop\cryptcare\cryptcare\cryptcare-frontend\src\CryptCareApp.jsx"
 
 with open(file_path, "r", encoding="utf-8") as f:
     content = f.read()
@@ -18,7 +18,7 @@ old_app_shell = """/* ----------------------------------------------------------
 /* APP SHELL                                                              */
 /* ---------------------------------------------------------------------- */
 
-export default function MediVaultApp() {
+export default function CryptCareApp() {
   const [theme, setTheme] = useState("light");
   const [role, setRole] = useState("patient");
   const [nav, setNav] = useState("overview");
@@ -65,7 +65,7 @@ const LoginPage = ({ onLogin }) => {
             <ShieldCheck size={26} color="#fff" />
           </div>
         </div>
-        <h2 className="text-2xl font-bold text-center mb-1">Welcome to MediVault</h2>
+        <h2 className="text-2xl font-bold text-center mb-1">Welcome to CryptCare</h2>
         <p className="text-sm text-center text-gray-500 dark:text-gray-400 mb-6">Enter your credentials to continue</p>
         
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -96,7 +96,7 @@ const LoginPage = ({ onLogin }) => {
 /* APP SHELL                                                              */
 /* ---------------------------------------------------------------------- */
 
-export default function MediVaultApp() {
+export default function CryptCareApp() {
   const [theme, setTheme] = useState("light");
   const [currentUser, setCurrentUser] = useState(null);
   const [nav, setNav] = useState("overview");
@@ -163,4 +163,4 @@ content = content.replace(role_menu_old, role_menu_new)
 
 with open(file_path, "w", encoding="utf-8") as f:
     f.write(content)
-print("Updated Auth Flow in MediVaultApp.jsx")
+print("Updated Auth Flow in CryptCareApp.jsx")

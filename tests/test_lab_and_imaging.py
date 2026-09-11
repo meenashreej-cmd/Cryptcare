@@ -1,4 +1,4 @@
-import io
+﻿import io
 import pytest
 from datetime import datetime, timedelta
 from app.core.security import create_access_token
@@ -10,7 +10,7 @@ from app.models.consent import ConsentRequest, ConsentStatusEnum, GranteeTypeEnu
 def setup_lab_environment(db):
     # Patient User
     patient_user = User(
-        email="lab_patient@medivault.ai",
+        email="lab_patient@cryptcare.ai",
         phone="+1555555555",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.PATIENT,
@@ -24,7 +24,7 @@ def setup_lab_environment(db):
 
     # Doctor User
     doctor_user = User(
-        email="lab_doctor@medivault.ai",
+        email="lab_doctor@cryptcare.ai",
         phone="+2555555555",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.DOCTOR,
@@ -38,7 +38,7 @@ def setup_lab_environment(db):
 
     # Lab Tech User
     lab_user = User(
-        email="lab_tech@medivault.ai",
+        email="lab_tech@cryptcare.ai",
         phone="+3555555555",
         password_hash=hash_password("Password123!"),
         role=RoleEnum.LAB,

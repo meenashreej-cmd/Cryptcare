@@ -553,7 +553,7 @@ const PrescriptionsView = ({ currentUser }) => {
   const prescriptions = data || [];
   return (
     <div className="space-y-4">
-      <SectionHeader icon={FileText} title="Prescription History" desc="All prescriptions issued under your MediVault record" />
+      <SectionHeader icon={FileText} title="Prescription History" desc="All prescriptions issued under your CryptCare record" />
       <Card>
         <table className="mv-table">
           <thead><tr><th>Medications</th><th>Issued</th><th>Status</th><th>QR</th></tr></thead>
@@ -1447,7 +1447,7 @@ const SecurityCenterView = () => {
   const pieData = [{ name: "Encrypted", value: 100 }];
   return (
     <div className="space-y-5">
-      <SectionHeader icon={Shield} title="Security Center" desc="Encryption, identity, and threat posture across MediVault AI" />
+      <SectionHeader icon={Shield} title="Security Center" desc="Encryption, identity, and threat posture across CryptCare" />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard icon={Lock} label="Encryption" value="AES-256" sub="End-to-end" tone="teal" />
         <StatCard icon={FileSignature} label="Signature Verification" value="100%" sub="All RX cryptographically signed" tone="blue" />
@@ -1609,22 +1609,22 @@ const VitalsHistoryView = ({ currentUser }) => {
       <SectionHeader icon={HeartPulse} title="Vitals History" desc="Longitudinal tracking of your vital signs" />
       <Card>
         {loading ? <div className="p-4 text-center text-sm text-gray-500">Fetching records...</div> :
-        <table className="mv-table">
-          <thead><tr><th>Date</th><th>Heart Rate</th><th>Blood Pressure</th><th>Temp</th><th>SpO2</th><th>Notes</th></tr></thead>
-          <tbody>
-            {vitals.map((v, i) => (
-              <tr key={i}>
-                <td className="text-xs">{new Date(v.recorded_at).toLocaleString()}</td>
-                <td className="font-medium">{v.heart_rate_bpm} bpm</td>
-                <td>{v.blood_pressure_systolic}/{v.blood_pressure_diastolic}</td>
-                <td>{v.temperature_celsius}°C</td>
-                <td>{v.spo2_percentage}%</td>
-                <td className="text-xs" style={{ color: "var(--text-dim)" }}>{v.clinical_notes}</td>
-              </tr>
-            ))}
-            {vitals.length === 0 && <tr><td colSpan="6" className="text-center py-6 text-gray-500">No vitals found.</td></tr>}
-          </tbody>
-        </table>}
+          <table className="mv-table">
+            <thead><tr><th>Date</th><th>Heart Rate</th><th>Blood Pressure</th><th>Temp</th><th>SpO2</th><th>Notes</th></tr></thead>
+            <tbody>
+              {vitals.map((v, i) => (
+                <tr key={i}>
+                  <td className="text-xs">{new Date(v.recorded_at).toLocaleString()}</td>
+                  <td className="font-medium">{v.heart_rate_bpm} bpm</td>
+                  <td>{v.blood_pressure_systolic}/{v.blood_pressure_diastolic}</td>
+                  <td>{v.temperature_celsius}°C</td>
+                  <td>{v.spo2_percentage}%</td>
+                  <td className="text-xs" style={{ color: "var(--text-dim)" }}>{v.clinical_notes}</td>
+                </tr>
+              ))}
+              {vitals.length === 0 && <tr><td colSpan="6" className="text-center py-6 text-gray-500">No vitals found.</td></tr>}
+            </tbody>
+          </table>}
       </Card>
     </div>
   );
@@ -1633,7 +1633,7 @@ const VitalsHistoryView = ({ currentUser }) => {
 const VitalsManagementView = ({ currentUser }) => {
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(false);
-  
+
   // Nurse records vitals for a patient. Since we don't have a patient selector yet,
   // we'll just require the nurse to type the patient's ID.
   const [patientId, setPatientId] = useState("");
@@ -1672,16 +1672,16 @@ const VitalsManagementView = ({ currentUser }) => {
       <Card className="space-y-3">
         <div>
           <label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>PATIENT ID</label>
-          <input className="mv-input mt-1" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000" value={patientId} onChange={e=>setPatientId(e.target.value)} />
+          <input className="mv-input mt-1" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000" value={patientId} onChange={e => setPatientId(e.target.value)} />
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>HR</label><input className="mv-input mt-1" placeholder="bpm" value={hr} onChange={e=>setHr(e.target.value)} /></div>
-          <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>BP SYS</label><input className="mv-input mt-1" placeholder="mmHg" value={bpSys} onChange={e=>setBpSys(e.target.value)} /></div>
-          <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>BP DIA</label><input className="mv-input mt-1" placeholder="mmHg" value={bpDia} onChange={e=>setBpDia(e.target.value)} /></div>
-          <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>TEMP</label><input className="mv-input mt-1" placeholder="°C" value={temp} onChange={e=>setTemp(e.target.value)} /></div>
-          <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>SpO2</label><input className="mv-input mt-1" placeholder="%" value={spo2} onChange={e=>setSpo2(e.target.value)} /></div>
+          <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>HR</label><input className="mv-input mt-1" placeholder="bpm" value={hr} onChange={e => setHr(e.target.value)} /></div>
+          <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>BP SYS</label><input className="mv-input mt-1" placeholder="mmHg" value={bpSys} onChange={e => setBpSys(e.target.value)} /></div>
+          <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>BP DIA</label><input className="mv-input mt-1" placeholder="mmHg" value={bpDia} onChange={e => setBpDia(e.target.value)} /></div>
+          <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>TEMP</label><input className="mv-input mt-1" placeholder="°C" value={temp} onChange={e => setTemp(e.target.value)} /></div>
+          <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>SpO2</label><input className="mv-input mt-1" placeholder="%" value={spo2} onChange={e => setSpo2(e.target.value)} /></div>
         </div>
-        <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>CLINICAL NOTES</label><textarea className="mv-input mt-1" rows={2} placeholder="Observations..." value={notes} onChange={e=>setNotes(e.target.value)} /></div>
+        <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>CLINICAL NOTES</label><textarea className="mv-input mt-1" rows={2} placeholder="Observations..." value={notes} onChange={e => setNotes(e.target.value)} /></div>
         <div className="flex justify-end mt-2">
           <button className="mv-btn mv-btn-primary" onClick={handleRecord} disabled={loading || !patientId}><Check size={14} /> {loading ? "Encrypting..." : "Record Vitals"}</button>
         </div>
@@ -1743,16 +1743,16 @@ const RegErrBox = ({ error }) => error ? (
 /* ---------------------------------------------------------------------- */
 
 const REGISTER_ROLES = [
-  { id: "PATIENT",    label: "Patient",           icon: CircleUser,    desc: "Manage your personal health records" },
-  { id: "DOCTOR",     label: "Doctor",             icon: Stethoscope,   desc: "Clinical access · MFA required" },
-  { id: "NURSE",      label: "Nurse",              icon: HeartPulse,    desc: "Vitals & medication administration" },
-  { id: "PHARMACIST", label: "Pharmacist",         icon: FlaskRound,    desc: "Dispense & verify prescriptions" },
-  { id: "LAB",        label: "Lab Technician",     icon: FlaskConical,  desc: "Upload & manage lab reports" },
-  { id: "INSURER",    label: "Insurance Provider", icon: Building2,     desc: "Claims review & fraud monitoring" },
-  { id: "BLOOD_BANK", label: "Blood Bank",         icon: Droplet,       desc: "Inventory & fulfillment" },
+  { id: "PATIENT", label: "Patient", icon: CircleUser, desc: "Manage your personal health records" },
+  { id: "DOCTOR", label: "Doctor", icon: Stethoscope, desc: "Clinical access · MFA required" },
+  { id: "NURSE", label: "Nurse", icon: HeartPulse, desc: "Vitals & medication administration" },
+  { id: "PHARMACIST", label: "Pharmacist", icon: FlaskRound, desc: "Dispense & verify prescriptions" },
+  { id: "LAB", label: "Lab Technician", icon: FlaskConical, desc: "Upload & manage lab reports" },
+  { id: "INSURER", label: "Insurance Provider", icon: Building2, desc: "Claims review & fraud monitoring" },
+  { id: "BLOOD_BANK", label: "Blood Bank", icon: Droplet, desc: "Inventory & fulfillment" },
 ];
 
-const PROFESSIONAL_ROLES = ["DOCTOR","NURSE","PHARMACIST","LAB","INSURER","BLOOD_BANK"];
+const PROFESSIONAL_ROLES = ["DOCTOR", "NURSE", "PHARMACIST", "LAB", "INSURER", "BLOOD_BANK"];
 
 const FieldRow = ({ label, children }) => (
   <div>
@@ -1780,14 +1780,14 @@ const RegSelect = ({ children, ...props }) => (
 
 const RegisterPage = ({ onRegistered, onBackToLogin }) => {
   // step: "role" | "details" | "otp"
-  const [step, setStep]           = useState("role");
-  const [selectedRole, setRole]   = useState(null);
-  const [pendingUserId, setUid]   = useState(null);
-  const [showMfaUri, setMfaUri]   = useState(null);
-  const [otpCode, setOtpCode]     = useState("");
-  const [error, setError]         = useState("");
-  const [loading, setLoading]     = useState(false);
-  const [showPw, setShowPw]       = useState(false);
+  const [step, setStep] = useState("role");
+  const [selectedRole, setRole] = useState(null);
+  const [pendingUserId, setUid] = useState(null);
+  const [showMfaUri, setMfaUri] = useState(null);
+  const [otpCode, setOtpCode] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [showPw, setShowPw] = useState(false);
 
   // Form fields
   const [form, setForm] = useState({
@@ -1799,9 +1799,9 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
 
   const isProfessional = PROFESSIONAL_ROLES.includes(selectedRole);
-  const isPatient      = selectedRole === "PATIENT";
-  const isDoctor       = selectedRole === "DOCTOR";
-  const isNurse        = selectedRole === "NURSE";
+  const isPatient = selectedRole === "PATIENT";
+  const isDoctor = selectedRole === "DOCTOR";
+  const isNurse = selectedRole === "NURSE";
 
   /* ---- Step 1 → 2 ---------------------------------------------------- */
   const handleRoleSelect = (roleId) => {
@@ -1817,28 +1817,28 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
     setError("");
     try {
       const payload = {
-        email:       form.email,
-        phone:       form.phone,
-        password:    form.password,
-        full_name:   form.full_name,
-        role:        selectedRole,
+        email: form.email,
+        phone: form.phone,
+        password: form.password,
+        full_name: form.full_name,
+        role: selectedRole,
       };
       if (isPatient) {
-        if (form.dob)         payload.dob         = form.dob;
-        if (form.gender)      payload.gender       = form.gender;
-        if (form.blood_group) payload.blood_group  = form.blood_group;
+        if (form.dob) payload.dob = form.dob;
+        if (form.gender) payload.gender = form.gender;
+        if (form.blood_group) payload.blood_group = form.blood_group;
       }
       if (isProfessional) {
-        payload.license_number   = form.license_number;
+        payload.license_number = form.license_number;
         if (isDoctor) {
           payload.specialization = form.specialization;
-          payload.hospital_name  = form.hospital_name;
+          payload.hospital_name = form.hospital_name;
         }
         if (isNurse) {
-          payload.hospital_name  = form.hospital_name;
-          payload.department     = form.department;
+          payload.hospital_name = form.hospital_name;
+          payload.department = form.department;
         }
-        if (["LAB","PHARMACIST","INSURER","BLOOD_BANK"].includes(selectedRole)) {
+        if (["LAB", "PHARMACIST", "INSURER", "BLOOD_BANK"].includes(selectedRole)) {
           payload.organization_name = form.organization_name;
         }
       }
@@ -1965,7 +1965,7 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
                 <FieldRow label="Blood Group">
                   <RegSelect value={form.blood_group} onChange={set("blood_group")}>
                     <option value="">Select...</option>
-                    {["A+","A-","B+","B-","AB+","AB-","O+","O-"].map(g => <option key={g}>{g}</option>)}
+                    {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map(g => <option key={g}>{g}</option>)}
                   </RegSelect>
                 </FieldRow>
               </div>
@@ -1993,7 +1993,7 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
                     <RegInput placeholder="e.g. ICU, General Ward" value={form.department} onChange={set("department")} />
                   </FieldRow>
                 </>}
-                {["LAB","PHARMACIST","INSURER","BLOOD_BANK"].includes(selectedRole) && (
+                {["LAB", "PHARMACIST", "INSURER", "BLOOD_BANK"].includes(selectedRole) && (
                   <FieldRow label={selectedRole === "LAB" ? "Lab Name" : selectedRole === "PHARMACIST" ? "Pharmacy Name" : selectedRole === "INSURER" ? "Company Name" : "Facility Name"}>
                     <RegInput placeholder="Organization name" value={form.organization_name} onChange={set("organization_name")} />
                   </FieldRow>
@@ -2002,7 +2002,7 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
             )}
 
             {/* MFA notice for roles that require it */}
-            {["DOCTOR","NURSE","PHARMACIST","ADMIN"].includes(selectedRole) && (
+            {["DOCTOR", "NURSE", "PHARMACIST", "ADMIN"].includes(selectedRole) && (
               <div className="flex items-start gap-2 p-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-300">
                 <KeyRound size={14} className="mt-0.5 shrink-0" />
                 <span>This role requires TOTP multi-factor authentication. After registration you will receive a QR code — scan it with Google Authenticator or Authy before your first login.</span>
@@ -2034,7 +2034,7 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
         <RegLogo />
         <div className="text-center mb-6">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-3"
-               style={{ background: "linear-gradient(135deg,rgba(15,182,170,0.15),rgba(47,111,224,0.15))" }}>
+            style={{ background: "linear-gradient(135deg,rgba(15,182,170,0.15),rgba(47,111,224,0.15))" }}>
             <Send size={24} style={{ color: "#0A8A82" }} />
           </div>
           <h2 className="text-xl font-bold" style={{ fontFamily: "'Sora', sans-serif" }}>Check your email</h2>
@@ -2120,9 +2120,9 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
             <ShieldCheck size={26} color="#fff" />
           </div>
         </div>
-        <h2 className="text-2xl font-bold text-center mb-1">Welcome to MediVault</h2>
+        <h2 className="text-2xl font-bold text-center mb-1">Welcome to CryptCare</h2>
         <p className="text-sm text-center text-gray-500 dark:text-gray-400 mb-6">Enter your credentials to continue</p>
-        
+
         {registeredSuccess && (
           <div className="flex items-center gap-2 p-3 mb-4 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-sm text-green-700 dark:text-green-300">
             <ShieldCheck size={16} className="shrink-0" />
@@ -2132,11 +2132,11 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Email Address</label>
-            <input type="email" value={email} onChange={e=>setEmail(e.target.value)} required className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors" />
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors" />
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Password</label>
-            <input type="password" value={password} onChange={e=>setPassword(e.target.value)} required className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors" />
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors" />
           </div>
           {error && <div className="text-sm text-red-500 p-2 bg-red-50 dark:bg-red-900/20 rounded-lg">{error}</div>}
           <button type="submit" disabled={loading} className="w-full py-3 rounded-xl font-bold text-white shadow-lg disabled:opacity-70" style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}>
@@ -2144,9 +2144,12 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
           </button>
         </form>
         <div className="mt-6 text-center text-xs text-gray-500">
-          <p>Demo Accounts:</p>
-          <p>patient@example.com | doctor@example.com | nurse@example.com | admin@example.com</p>
-          <p>Password: password123</p>
+          <p className="font-semibold mb-1">Demo Accounts (password: <span className="font-mono">Password123</span>)</p>
+          <p>patient@example.com · doctor@example.com</p>
+          <p>nurse@example.com · pharmacist@example.com</p>
+          <p>lab@example.com · insurer@example.com</p>
+          <p>bloodbank@example.com · admin@example.com</p>
+          <p className="mt-1 text-[11px] text-gray-400">MFA roles (doctor/nurse/pharmacist): TOTP secret <span className="font-mono">JBSWY3DPEHPK3PXP</span></p>
         </div>
         <p className="text-center text-sm text-gray-500 mt-4">
           New to CryptCare?{" "}
@@ -2195,9 +2198,11 @@ export default function MediVaultApp() {
           try {
             await authService.login(email, password);
             const me = await authService.getMe();
-            onLogin(me);
+            setCurrentUser(me);
+            setNav("overview");
             setShowRegister(false);
           } catch (e) {
+            // Login after register failed (e.g. MFA role) — send to login page
             setShowRegister(false);
             setRegisteredSuccess(true);
           }
@@ -2215,7 +2220,7 @@ export default function MediVaultApp() {
   }
 
   const role = currentUser.role.toLowerCase();
-  
+
   const ROLES = [
     { id: "patient", icon: CircleUser },
     { id: "doctor", icon: Stethoscope },
@@ -2230,13 +2235,13 @@ export default function MediVaultApp() {
   // Try to find the matching role icon, default to CircleUser
   const baseRoleInfo = ROLES.find(r => r.id === role) || ROLES[0];
   const roleInfo = { ...baseRoleInfo, name: currentUser.full_name, label: currentUser.role };
-  
+
   const navItems = NAV[role] || NAV["patient"];
   const ViewComp = VIEWS[role]?.[nav] || (() => <div>View not found or not connected yet</div>);
 
   const switchRole = (id) => { /* Disabled, role is fixed */ };
   const go = (id) => { setNav(id); setSidebarOpen(false); };
-  
+
   const handleLogout = () => {
     authService.logout();
     setCurrentUser(null);
@@ -2255,7 +2260,7 @@ export default function MediVaultApp() {
               <ShieldCheck size={19} color="#fff" />
             </div>
             <div>
-              <div className="mv-font-display font-bold text-sm leading-tight">MediVault AI</div>
+              <div className="mv-font-display font-bold text-sm leading-tight">CryptCare</div>
               <div className="text-[10px] mv-font-mono" style={{ color: "var(--text-faint)" }}>SOVEREIGN RX NETWORK</div>
             </div>
             <button className="lg:hidden ml-auto" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
@@ -2297,7 +2302,7 @@ export default function MediVaultApp() {
               {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
             </button>
             <div className="relative">
-              <button className="mv-glass p-2 rounded-lg relative mv-focusable" onClick={() => setSidebarOpen(prev => ({...prev, notif: !prev.notif}))}>
+              <button className="mv-glass p-2 rounded-lg relative mv-focusable" onClick={() => setSidebarOpen(prev => ({ ...prev, notif: !prev.notif }))}>
                 <Bell size={16} />
                 <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full text-[9px] flex items-center justify-center font-bold text-white" style={{ background: "var(--red)" }}>3</span>
               </button>
@@ -2310,7 +2315,7 @@ export default function MediVaultApp() {
                   <div className="space-y-2 max-h-64 overflow-y-auto mv-scroll">
                     {notificationsList.map(n => (
                       <div key={n.id} className="flex gap-2 items-start p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-                        <div className="mt-0.5">{n.type === "Break-Glass" ? <Siren size={14} className="text-red-500"/> : <Bell size={14} className="text-blue-500"/>}</div>
+                        <div className="mt-0.5">{n.type === "Break-Glass" ? <Siren size={14} className="text-red-500" /> : <Bell size={14} className="text-blue-500" />}</div>
                         <div>
                           <p className="text-xs font-medium" style={{ color: n.read ? "var(--text-dim)" : "var(--text)" }}>{n.message}</p>
                           <p className="text-[10px] mt-1" style={{ color: "var(--text-faint)" }}>{n.time}</p>

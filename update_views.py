@@ -1,7 +1,7 @@
 import re
 import sys
 
-file_path = r"c:\Users\meena\OneDrive\Desktop\cryptcare\cryptcare\medivault-ai-frontend\src\MediVaultApp.jsx"
+file_path = r"c:\Users\meena\OneDrive\Desktop\cryptcare\cryptcare\cryptcare-frontend\src\CryptCareApp.jsx"
 
 with open(file_path, "r", encoding="utf-8") as f:
     content = f.read()
@@ -17,7 +17,7 @@ old_prescriptions = """const PrescriptionsView = () => {
   const [qr, setQr] = useState(null);
   return (
     <div className="space-y-4">
-      <SectionHeader icon={FileText} title="Prescription History" desc="All prescriptions issued under your MediVault record" />
+      <SectionHeader icon={FileText} title="Prescription History" desc="All prescriptions issued under your CryptCare record" />
       <Card>
         <table className="mv-table">
           <thead><tr><th>RX ID</th><th>Medication</th><th>Doctor</th><th>Date</th><th>Status</th><th>Signature</th><th>QR</th></tr></thead>
@@ -59,7 +59,7 @@ new_prescriptions = """const PrescriptionsView = ({ currentUser }) => {
 
   return (
     <div className="space-y-4">
-      <SectionHeader icon={FileText} title="Prescription History" desc="All prescriptions issued under your MediVault record" />
+      <SectionHeader icon={FileText} title="Prescription History" desc="All prescriptions issued under your CryptCare record" />
       <Card>
         {loading ? <div className="p-4 text-center text-sm text-gray-500">Decrypting vault records...</div> : 
         <table className="mv-table">
@@ -159,4 +159,4 @@ content = content.replace(old_vitals, new_vitals)
 
 with open(file_path, "w", encoding="utf-8") as f:
     f.write(content)
-print("Updated Prescriptions and Vitals Views in MediVaultApp.jsx")
+print("Updated Prescriptions and Vitals Views in CryptCareApp.jsx")

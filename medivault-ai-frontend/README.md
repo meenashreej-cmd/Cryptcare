@@ -1,4 +1,4 @@
-# MediVault AI – Patient Sovereign Prescription Intelligence Network
+# CryptCare – Patient Sovereign Prescription Intelligence Network
 
 A healthcare cybersecurity SaaS dashboard concept covering 6 roles
 (Patient, Doctor, Nurse, Pharmacist, Insurance Provider, System Admin),
@@ -24,7 +24,7 @@ npm run preview
 
 ## Structure
 
-- `src/MediVaultApp.jsx` — the entire application (single component, role-based views)
+- `src/CryptCareApp.jsx` — the entire application (single component, role-based views)
 - `src/main.jsx` — React entry point
 - `index.html` — Vite HTML entry
 - `tailwind.config.js` / `postcss.config.js` — Tailwind setup
