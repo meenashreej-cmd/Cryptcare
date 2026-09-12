@@ -9,7 +9,7 @@ export default defineConfig({
       // This eliminates CORS issues — the browser talks to Vite (same origin),
       // Vite forwards to FastAPI on port 8000.
       "/api": {
-        target: "http://localhost:8000",
+        target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
     },
