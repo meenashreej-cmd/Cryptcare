@@ -75,7 +75,7 @@ def seed_db():
                 full_name=full_name,
                 status=UserStatusEnum.ACTIVE,
                 mfa_enabled=mfa,
-                mfa_secret="JBSWY3DPEHPK3PXP",  # demo TOTP (pyotp.random_base32() equivalent)
+                mfa_secret=encrypt("JBSWY3DPEHPK3PXP") if mfa else None,
             )
             db.add(u)
             db.flush()

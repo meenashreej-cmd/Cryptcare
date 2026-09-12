@@ -271,6 +271,12 @@ function RiskTone(level) {
   return "green";
 }
 
+const drugInteractions = [
+  { pair: "Atorvastatin + Clarithromycin", risk: "Severe", note: "Increased risk of myopathy/rhabdomyolysis. Avoid combination if possible." },
+  { pair: "Lisinopril + Potassium Supplements", risk: "Moderate", note: "Monitor for hyperkalemia. Check serum K+ after 1 week." },
+  { pair: "Ibuprofen + Aspirin", risk: "Low", note: "May decrease antiplatelet effect of aspirin. Separate dosing by 2 hours." }
+];
+
 /* Trust Ledger — signature scrolling element ---------------------------- */
 const TrustLedger = () => (
   <Card className="overflow-hidden h-full flex flex-col">
@@ -984,25 +990,70 @@ const PatientSearchView = ({ currentUser }) => {
 const CreatePrescriptionView = () => {
   const [sig, setSig] = useState(false);
   const [signed, setSigned] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  
+  const [patientId, setPatientId] = useState("");
+  const [medication, setMedication] = useState("Atorvastatin 20mg");
+  const [dosageFreq, setDosageFreq] = useState("Once daily, evening");
+  const [duration, setDuration] = useState("90");
+  const [notes, setNotes] = useState("Continue cholesterol management; recheck lipid panel in 3 months.");
+  const [diagnosis, setDiagnosis] = useState("Hyperlipidemia");
+
+  const handleSign = async () => {
+    setSig(false);
+    setLoading(true);
+    setError(null);
+    try {
+      const payload = {
+        patient_id: patientId,
+        diagnosis: diagnosis,
+        notes: notes,
+        items: [
+          {
+            medicine_name: medication,
+            dosage: "20mg",
+            frequency: dosageFreq,
+            duration_days: parseInt(duration) || 90
+          }
+        ]
+      };
+      await vaultService.createPrescription(payload);
+      setSigned(true);
+    } catch (err) {
+      setError(err.response?.data?.detail || "Failed to create prescription. Check patient ID.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <SectionHeader icon={FileSignature} title="Create Prescription" desc="Draft and digitally sign a new prescription for the selected patient" />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>MEDICATION</label><input className="mv-input mv-focusable mt-1" defaultValue="Atorvastatin 20mg" /></div>
-            <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>DOSAGE FREQUENCY</label><input className="mv-input mv-focusable mt-1" defaultValue="Once daily, evening" /></div>
+          <div className="grid grid-cols-1 gap-3">
+            <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>PATIENT ID</label><input className="mv-input mv-focusable mt-1" value={patientId} onChange={e => setPatientId(e.target.value)} placeholder="e.g. UUID of Patient" /></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>DURATION</label><input className="mv-input mv-focusable mt-1" defaultValue="90 days" /></div>
-            <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>REFILLS</label><input className="mv-input mv-focusable mt-1" defaultValue="2" /></div>
+            <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>DIAGNOSIS</label><input className="mv-input mv-focusable mt-1" value={diagnosis} onChange={e => setDiagnosis(e.target.value)} /></div>
+            <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>MEDICATION</label><input className="mv-input mv-focusable mt-1" value={medication} onChange={e => setMedication(e.target.value)} /></div>
           </div>
-          <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>CLINICAL NOTES</label><textarea className="mv-input mv-focusable mt-1" rows={3} defaultValue="Continue cholesterol management; recheck lipid panel in 3 months." /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>DOSAGE FREQUENCY</label><input className="mv-input mv-focusable mt-1" value={dosageFreq} onChange={e => setDosageFreq(e.target.value)} /></div>
+            <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>DURATION (DAYS)</label><input className="mv-input mv-focusable mt-1" type="number" value={duration} onChange={e => setDuration(e.target.value)} /></div>
+          </div>
+          <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>CLINICAL NOTES</label><textarea className="mv-input mv-focusable mt-1" rows={3} value={notes} onChange={e => setNotes(e.target.value)} /></div>
+          
+          {error && <div className="text-sm text-red-500 p-2 bg-red-50 dark:bg-red-900/20 rounded-lg mt-2">{error}</div>}
+          
           <div className="flex justify-end gap-2 pt-2">
             <button className="mv-btn mv-btn-ghost">Save Draft</button>
-            <button className="mv-btn mv-btn-primary" onClick={() => setSig(true)}><FileSignature size={14} /> Sign & Issue</button>
+            <button className="mv-btn mv-btn-primary" disabled={loading || !patientId} onClick={() => setSig(true)}>
+              <FileSignature size={14} /> {loading ? "Signing..." : "Sign & Issue"}
+            </button>
           </div>
-          {signed && <div className="mv-chip green"><Check size={11} /> Prescription cryptographically signed and pushed to patient vault</div>}
+          {signed && <div className="mv-chip green mt-2"><Check size={11} /> Prescription cryptographically signed and pushed to patient vault</div>}
         </Card>
         <Card>
           <h4 className="font-semibold text-sm mb-3 flex items-center gap-2"><Sparkles size={15} style={{ color: "var(--teal-deep)" }} /> AI Safety Check</h4>
@@ -1016,7 +1067,7 @@ const CreatePrescriptionView = () => {
           </div>
         </Card>
       </div>
-      {sig && <SignatureModal onClose={() => setSig(false)} onConfirm={() => setSigned(true)} />}
+      {sig && <SignatureModal onClose={() => setSig(false)} onConfirm={handleSign} />}
     </div>
   );
 };
@@ -2094,6 +2145,8 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
 const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -2102,11 +2155,16 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
     setLoading(true);
     setError("");
     try {
-      await authService.login(email, password);
+      await authService.login(email, password, mfaRequired ? otpCode : undefined);
       const me = await authService.getMe();
       onLogin(me);
     } catch (err) {
-      setError("Invalid credentials or server unavailable.");
+      if (err.response?.data?.detail === "MFA code required") {
+        setMfaRequired(true);
+        setError("");
+      } else {
+        setError(err.response?.data?.detail || "Invalid credentials or server unavailable.");
+      }
     } finally {
       setLoading(false);
     }
@@ -2130,17 +2188,26 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
           </div>
         )}
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Email Address</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors" />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Password</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors" />
-          </div>
+          {!mfaRequired ? (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Email Address</label>
+                <input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Password</label>
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors" />
+              </div>
+            </>
+          ) : (
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Authenticator Code (TOTP)</label>
+              <input type="text" value={otpCode} onChange={e => setOtpCode(e.target.value)} required placeholder="6-digit code" className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors text-center tracking-[0.5em] font-mono text-lg" maxLength={6} />
+            </div>
+          )}
           {error && <div className="text-sm text-red-500 p-2 bg-red-50 dark:bg-red-900/20 rounded-lg">{error}</div>}
           <button type="submit" disabled={loading} className="w-full py-3 rounded-xl font-bold text-white shadow-lg disabled:opacity-70" style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}>
-            {loading ? "Authenticating..." : "Sign In securely"}
+            {loading ? "Authenticating..." : mfaRequired ? "Verify Code" : "Sign In securely"}
           </button>
         </form>
         <div className="mt-6 text-center text-xs text-gray-500">
