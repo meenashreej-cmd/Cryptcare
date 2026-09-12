@@ -12,6 +12,7 @@ Run:
 import sys
 import os
 from datetime import date, datetime, timedelta, timezone
+from sqlalchemy import text
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -50,7 +51,12 @@ PASSWORD = "Password123"  # meets: >=10 chars, 1 upper, 1 digit
 
 def seed_db():
     print("Dropping all tables...")
-    Base.metadata.drop_all(bind=engine)
+    with engine.begin() as conn:
+        if "sqlite" not in str(engine.url):
+            conn.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+        Base.metadata.drop_all(bind=conn)
+        if "sqlite" not in str(engine.url):
+            conn.execute(text("SET FOREIGN_KEY_CHECKS=1"))
     print("Creating all tables...")
     Base.metadata.create_all(bind=engine)
 

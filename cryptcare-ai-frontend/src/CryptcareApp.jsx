@@ -2164,7 +2164,7 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
 /* APP SHELL                                                              */
 /* ---------------------------------------------------------------------- */
 
-export default function MediVaultApp() {
+export default function CryptcareApp() {
   const [theme, setTheme] = useState("light");
   const [currentUser, setCurrentUser] = useState(null);
   const [nav, setNav] = useState("overview");
