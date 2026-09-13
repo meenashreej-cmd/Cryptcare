@@ -159,6 +159,10 @@ export const labService = {
     const res = await api.post('/lab/requests', payload);
     return res.data;
   },
+  getRequests: async () => {
+    const res = await api.get('/lab/requests');
+    return res.data;
+  },
   startRequest: async (requestId) => {
     const res = await api.put(`/lab/requests/${requestId}/start`);
     return res.data;
@@ -333,7 +337,7 @@ export const auditService = {
 export const notificationService = {
   getAll: async (unreadOnly = false) => {
     const res = await api.get(`/notifications${unreadOnly ? '?unread_only=true' : ''}`);
-    return res.data;
+    return res.data?.notifications || [];
   },
   markRead: async (notificationId) => {
     const res = await api.put(`/notifications/${notificationId}/read`);
@@ -341,7 +345,18 @@ export const notificationService = {
   },
 };
 
-// ── ADMIN ──────────────────────────────────────────────────────────────────
+export const hospitalService = {
+  getStaff: async () => {
+    const res = await api.get('/hospital/staff');
+    return res.data;
+  },
+  getNetwork: async () => {
+    const res = await api.get('/hospital/network');
+    return res.data;
+  },
+};
+
+// 🏥 ADMIN 🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥🏥
 export const adminService = {
   getPendingVerifications: async () => {
     const res = await api.get('/admin/pending-verifications');

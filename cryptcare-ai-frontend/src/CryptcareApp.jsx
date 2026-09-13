@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import api, {
   authService, vaultService, consentService, nursingService,
   fraudService, insuranceService, auditService, notificationService,
-  adminService, bloodBankService,
+  adminService, bloodBankService, labService, hospitalService,
 } from "./api";
 import {
   ShieldCheck, ShieldAlert, Shield, Lock, Unlock, Fingerprint, KeyRound,
@@ -177,10 +177,13 @@ const NAV = {
   admin: [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
     { id: "ai-center", label: "AI Intelligence Center", icon: Sparkles },
-    { id: "security", label: "Security Center", icon: Shield },
-    { id: "audit", label: "Audit & Transparency", icon: ScrollText },
-    { id: "analytics", label: "Analytics Dashboard", icon: BarChart3 },
-    { id: "users", label: "User Management", icon: Users },
+    { id: "security", label: "Security & Threat Center", icon: Radar },
+    { id: "audit", label: "Platform Audit Logs", icon: ClipboardCheck },
+    { id: "analytics", label: "System Analytics", icon: BarChart3 },
+    { id: "users", label: "User Verification", icon: Users },
+  ],
+  hospital_admin: [
+    { id: "overview", label: "Hospital Dashboard", icon: LayoutDashboard },
   ],
 };
 
@@ -709,9 +712,7 @@ const LabsView = ({ currentUser }) => {
       formData.append('summary_text', summary);
       formData.append('document_type', 'LAB_SUMMARY');
       
-      await api.post(`/lab/requests/${reqId}/report`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      await api.post(`/lab/requests/${reqId}/report`, formData);
       
       await fetchReports();
       setShowAdd(false);
@@ -1739,32 +1740,104 @@ const AnomaliesView = ({ currentUser }) => {
 /* ADMIN / SHARED PLATFORM VIEWS                                         */
 /* ---------------------------------------------------------------------- */
 
-const AdminOverview = () => (
-  <div className="space-y-5">
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-      <StatCard icon={Users} label="Active Users" value="2,481" tone="teal" />
-      <StatCard icon={ShieldCheck} label="System Uptime" value="99.98%" tone="green" />
-      <StatCard icon={ShieldAlert} label="Open Threats" value="0" tone="blue" />
-      <StatCard icon={Server} label="Vault Shards" value="64" sub="Distributed across 3 regions" tone="amber" />
-    </div>
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <Card className="lg:col-span-2" style={{ height: 300 }}>
-        <h4 className="font-semibold text-sm mb-3">Platform Activity (6 Months)</h4>
-        <ResponsiveContainer width="100%" height="90%">
-          <AreaChart data={analyticsTrend}>
-            <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0FB6AA" stopOpacity={0.5} /><stop offset="100%" stopColor="#0FB6AA" stopOpacity={0} /></linearGradient></defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="m" stroke="var(--text-faint)" fontSize={11} />
-            <YAxis stroke="var(--text-faint)" fontSize={11} />
-            <Tooltip contentStyle={{ background: "var(--panel-solid)", border: "1px solid var(--border)", borderRadius: 10, fontSize: 12 }} />
-            <Area type="monotone" dataKey="access" stroke="#0FB6AA" fill="url(#g1)" strokeWidth={2} />
-          </AreaChart>
-        </ResponsiveContainer>
+const analyticsTrend = [
+  { m: "Jan", access: 320, prescriptions: 150 },
+  { m: "Feb", access: 450, prescriptions: 220 },
+  { m: "Mar", access: 510, prescriptions: 280 },
+  { m: "Apr", access: 680, prescriptions: 350 },
+  { m: "May", access: 820, prescriptions: 410 },
+  { m: "Jun", access: 950, prescriptions: 520 }
+];
+
+const AdminOverview = () => {
+  const [pendingUsers, setPendingUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const fetchPending = async () => {
+    try {
+      const data = await adminService.getPendingVerifications();
+      setPendingUsers(data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPending();
+  }, []);
+
+  const handleVerify = async (userId, approve) => {
+    setActionLoading(true);
+    try {
+      await adminService.verifyLicense(userId, approve);
+      await fetchPending();
+    } catch (err) {
+      alert("Verification action failed.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard icon={Users} label="Active Users" value="2,481" tone="teal" />
+        <StatCard icon={ShieldCheck} label="System Uptime" value="99.98%" tone="green" />
+        <StatCard icon={ShieldAlert} label="Open Threats" value="0" tone="blue" />
+        <StatCard icon={Server} label="Vault Shards" value="64" sub="Distributed across 3 regions" tone="amber" />
+      </div>
+
+      <Card>
+        <h4 className="font-semibold text-sm mb-3">Pending License Verifications</h4>
+        {loading ? <div className="p-4 text-center text-sm text-gray-500">Loading pending verifications...</div> :
+          <table className="mv-table">
+            <thead><tr><th>User ID</th><th>Email</th><th>Role</th><th>License / Hospital</th><th>Actions</th></tr></thead>
+            <tbody>
+              {pendingUsers.map(u => (
+                <tr key={u.user_id}>
+                  <td className="text-xs mv-font-mono" title={u.user_id}>{u.user_id.slice(0, 8)}...</td>
+                  <td>{u.email}</td>
+                  <td>{u.role}</td>
+                  <td className="text-xs text-gray-500">
+                    <div>Lic: {u.license_number}</div>
+                    <div>{u.hospital_name || u.pharmacy_name || u.insurance_company_name}</div>
+                  </td>
+                  <td>
+                    <div className="flex gap-2">
+                      <button className="mv-btn mv-btn-primary text-xs py-1 px-2" disabled={actionLoading} onClick={() => handleVerify(u.user_id, true)}>Approve</button>
+                      <button className="mv-btn mv-btn-danger text-xs py-1 px-2" disabled={actionLoading} onClick={() => handleVerify(u.user_id, false)}>Reject</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {pendingUsers.length === 0 && <tr><td colSpan="5" className="text-center py-6 text-gray-500">No pending verifications.</td></tr>}
+            </tbody>
+          </table>
+        }
       </Card>
-      <TrustLedger />
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card className="lg:col-span-2" style={{ height: 300 }}>
+          <h4 className="font-semibold text-sm mb-3">Platform Activity (6 Months)</h4>
+          <ResponsiveContainer width="100%" height="90%">
+            <AreaChart data={analyticsTrend}>
+              <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0FB6AA" stopOpacity={0.5} /><stop offset="100%" stopColor="#0FB6AA" stopOpacity={0} /></linearGradient></defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="m" stroke="var(--text-faint)" fontSize={11} />
+              <YAxis stroke="var(--text-faint)" fontSize={11} />
+              <Tooltip contentStyle={{ background: "var(--panel-solid)", border: "1px solid var(--border)", borderRadius: 10, fontSize: 12 }} />
+              <Area type="monotone" dataKey="access" stroke="#0FB6AA" fill="url(#g1)" strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </Card>
+        <TrustLedger />
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const AICenterView = () => (
   <div className="space-y-5">
@@ -1886,20 +1959,53 @@ const SecurityCenterView = () => {
   );
 };
 
-const AuditView = () => (
-  <div className="space-y-5">
-    <SectionHeader icon={ScrollText} title="Audit & Transparency Dashboard" desc="Who accessed what, when, and why — fully traceable"
-      action={<button className="mv-btn mv-btn-ghost"><Download size={14} /> Export Report</button>} />
-    <Card>
-      <table className="mv-table">
-        <thead><tr><th>User</th><th>Action</th><th>Purpose</th><th>Time</th><th>Source IP</th></tr></thead>
-        <tbody>{accessHistoryTimeline.map((a, i) => (
-          <tr key={i}><td>{a.who}</td><td>{a.action}</td><td><Pill_ tone="blue">{a.purpose}</Pill_></td><td>{a.time}</td><td className="mv-font-mono">{a.ip}</td></tr>
-        ))}</tbody>
-      </table>
-    </Card>
-  </div>
-);
+const AuditView = () => {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchLogs = async () => {
+      try {
+        const data = await auditService.getLogs(0, 100);
+        setLogs(data || []);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchLogs();
+  }, []);
+
+  return (
+    <div className="space-y-5">
+      <SectionHeader icon={ScrollText} title="Audit & Transparency Dashboard" desc="System-wide access log monitoring" />
+      <Card>
+        {loading ? <div className="p-4 text-center text-sm text-gray-500">Loading audit logs...</div> :
+          <div className="overflow-x-auto">
+            <table className="mv-table w-full">
+              <thead><tr><th>Time</th><th>User ID</th><th>Action</th><th>Resource Type</th><th>Resource ID</th><th>Reason</th><th>IP Address</th></tr></thead>
+              <tbody>
+                {logs.map(log => (
+                  <tr key={log.id}>
+                    <td className="text-xs whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</td>
+                    <td className="text-xs mv-font-mono" title={log.user_id}>{log.user_id.slice(0, 8)}...</td>
+                    <td><Pill_ tone={log.action.includes("CREATE") || log.action.includes("WRITE") ? "green" : log.action.includes("READ") ? "blue" : "amber"}>{log.action}</Pill_></td>
+                    <td className="text-xs">{log.resource_type || "-"}</td>
+                    <td className="text-xs mv-font-mono" title={log.resource_id}>{log.resource_id ? log.resource_id.slice(0, 8) + "..." : "-"}</td>
+                    <td className="text-xs">{log.reason || "-"}</td>
+                    <td className="text-xs mv-font-mono">{log.ip_address}</td>
+                  </tr>
+                ))}
+                {logs.length === 0 && <tr><td colSpan="7" className="text-center py-6 text-gray-500">No logs found.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        }
+      </Card>
+    </div>
+  );
+};
 
 const COLORS = ["#0FB6AA", "#2F6FE0", "#F2A93B", "#E5484D"];
 const AnalyticsView = () => {
@@ -2272,14 +2378,144 @@ const LabOverview = () => (
   </div>
 );
 
-const LabRequestsView = () => (
-  <div className="space-y-4">
-    <SectionHeader icon={FlaskConical} title="Lab Requests" desc="Manage patient test requests and upload reports" />
-    <Card>
-      <p className="text-sm text-gray-500">Lab test processing and encrypted file uploads will appear here.</p>
-    </Card>
-  </div>
-);
+const LabRequestsView = ({ currentUser }) => {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [uploadingFor, setUploadingFor] = useState(null);
+  
+  const [docType, setDocType] = useState("LAB_SUMMARY");
+  const [summaryText, setSummaryText] = useState("");
+  const [file, setFile] = useState(null);
+
+  const fetchRequests = async () => {
+    try {
+      const data = await labService.getRequests();
+      setRequests(data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRequests();
+  }, []);
+
+  const handleStart = async (id) => {
+    setActionLoading(true);
+    try {
+      await labService.startRequest(id);
+      await fetchRequests();
+    } catch (err) {
+      alert("Failed to start processing.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleUploadSubmit = async (e) => {
+    e.preventDefault();
+    if (!file) return alert("Please select a file.");
+    setActionLoading(true);
+    
+    const formData = new FormData();
+    formData.append("document_type", docType);
+    formData.append("summary_text", summaryText);
+    formData.append("file", file);
+
+    try {
+      await labService.uploadReport(uploadingFor, formData);
+      setUploadingFor(null);
+      setDocType("LAB_SUMMARY");
+      setSummaryText("");
+      setFile(null);
+      await fetchRequests();
+    } catch (err) {
+      alert("Failed to upload report. " + (err.response?.data?.detail || ""));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <SectionHeader icon={FlaskConical} title="Lab Requests" desc="Manage patient test requests and upload reports" />
+      
+      {uploadingFor && (
+        <Card className="mb-4">
+          <div className="flex justify-between items-center mb-3">
+            <h4 className="font-semibold text-sm">Upload Report</h4>
+            <button className="text-xs text-gray-500 hover:text-gray-700" onClick={() => setUploadingFor(null)}>Cancel</button>
+          </div>
+          <form onSubmit={handleUploadSubmit} className="space-y-3">
+            <div>
+              <label className="text-xs font-semibold text-gray-500">DOCUMENT TYPE</label>
+              <select className="mv-input mt-1" value={docType} onChange={e => setDocType(e.target.value)}>
+                <option value="LAB_SUMMARY">Lab Summary (pdf, txt, csv)</option>
+                <option value="MRI">MRI (dcm, jpg, png)</option>
+                <option value="CT_SCAN">CT Scan (dcm, jpg, png)</option>
+                <option value="XRAY">X-Ray (dcm, jpg, png)</option>
+                <option value="PDF_REPORT">PDF Report</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500">SUMMARY / NOTES</label>
+              <textarea className="mv-input mt-1" rows="3" required value={summaryText} onChange={e => setSummaryText(e.target.value)} placeholder="Summary notes..." />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500">REPORT FILE</label>
+              <input type="file" className="mv-input mt-1" required 
+                accept={docType === "PDF_REPORT" ? ".pdf" : docType === "LAB_SUMMARY" ? ".pdf,.txt,.csv" : docType === "OTHER" ? "*" : ".dcm,.jpg,.jpeg,.png"}
+                onChange={e => setFile(e.target.files[0])} />
+            </div>
+            <button type="submit" className="mv-btn mv-btn-primary w-full mt-2" disabled={actionLoading}>
+              {actionLoading ? "Encrypting & Uploading..." : "Submit & Encrypt"}
+            </button>
+          </form>
+        </Card>
+      )}
+
+      <Card>
+        {loading ? <div className="p-4 text-center text-sm text-gray-500">Loading requests...</div> :
+          <table className="mv-table">
+            <thead><tr><th>Request ID</th><th>Patient ID</th><th>Test Type</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>
+              {requests.map(r => (
+                <tr key={r.request_id}>
+                  <td className="text-xs mv-font-mono" title={r.request_id}>{r.request_id.slice(0, 8)}...</td>
+                  <td className="text-xs mv-font-mono" title={r.patient_id}>{r.patient_id.slice(0, 8)}...</td>
+                  <td>{r.test_type}</td>
+                  <td>
+                    <Pill_ tone={r.status === "REQUESTED" ? "blue" : r.status === "IN_PROGRESS" ? "amber" : "green"}>
+                      {r.status}
+                    </Pill_>
+                  </td>
+                  <td>
+                    {r.status === "REQUESTED" && (
+                      <button className="mv-btn mv-btn-primary text-xs py-1 px-2" disabled={actionLoading} onClick={() => handleStart(r.request_id)}>
+                        Start Processing
+                      </button>
+                    )}
+                    {r.status === "IN_PROGRESS" && r.assigned_lab_user_id === currentUser.user_id && (
+                      <button className="mv-btn mv-btn-primary text-xs py-1 px-2" disabled={actionLoading} onClick={() => setUploadingFor(r.request_id)}>
+                        Upload Report
+                      </button>
+                    )}
+                    {r.status === "COMPLETED" && <span className="text-xs text-gray-500">Completed</span>}
+                  </td>
+                </tr>
+              ))}
+              {requests.length === 0 && <tr><td colSpan="5" className="text-center py-6 text-gray-500">No lab requests found.</td></tr>}
+            </tbody>
+          </table>
+        }
+      </Card>
+    </div>
+  );
+};
 
 const BloodBankOverview = () => (
   <div className="space-y-4">
@@ -2290,26 +2526,395 @@ const BloodBankOverview = () => (
   </div>
 );
 
-const BloodInventoryView = () => (
-  <div className="space-y-4">
-    <SectionHeader icon={Droplet} title="Blood Inventory" desc="Current stock levels by blood group" />
-    <Card>
-      <p className="text-sm text-gray-500">Blood group inventory management will appear here.</p>
-    </Card>
-  </div>
-);
+const BloodInventoryView = () => {
+  const [inventory, setInventory] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  
+  const [bloodGroup, setBloodGroup] = useState("O+");
+  const [component, setComponent] = useState("WHOLE_BLOOD");
+  const [collectionDate, setCollectionDate] = useState("");
+  const [expiryDate, setExpiryDate] = useState("");
 
-const BloodRequestsView = () => (
-  <div className="space-y-4">
-    <SectionHeader icon={Activity} title="Blood Requests" desc="Incoming requests from doctors and emergency" />
-    <Card>
-      <p className="text-sm text-gray-500">Blood fulfillment tracking will appear here.</p>
-    </Card>
-  </div>
-);
+  const fetchInventory = async () => {
+    try {
+      const data = await bloodBankService.getInventory();
+      setInventory(data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchInventory();
+  }, []);
+
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    if (!collectionDate || !expiryDate) return alert("Dates are required.");
+    try {
+      await bloodBankService.addUnit({
+        blood_group: bloodGroup,
+        component: component,
+        collection_date: collectionDate,
+        expiry_date: expiryDate
+      });
+      setBloodGroup("O+");
+      setComponent("WHOLE_BLOOD");
+      setCollectionDate("");
+      setExpiryDate("");
+      await fetchInventory();
+    } catch (err) {
+      alert("Failed to add unit. " + (err.response?.data?.detail || ""));
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <SectionHeader icon={Droplet} title="Blood Inventory" desc="Current stock levels and unit registration" action={
+        <button className="mv-btn mv-btn-primary text-xs py-1.5 px-3" onClick={() => setAdding(!adding)}>
+          {adding ? "Close" : "+ Add Unit"}
+        </button>
+      } />
+      
+      {adding && (
+        <Card className="mb-4">
+          <form onSubmit={handleAdd} className="space-y-3">
+            <h4 className="font-semibold text-sm">Register New Blood Unit</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-500">BLOOD GROUP</label>
+                <select className="mv-input mt-1" value={bloodGroup} onChange={e => setBloodGroup(e.target.value)}>
+                  {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500">COMPONENT</label>
+                <select className="mv-input mt-1" value={component} onChange={e => setComponent(e.target.value)}>
+                  {["WHOLE_BLOOD", "PACKED_RBC", "PLASMA", "PLATELETS"].map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-500">COLLECTION DATE</label>
+                <input type="date" className="mv-input mt-1" required value={collectionDate} onChange={e => setCollectionDate(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500">EXPIRY DATE</label>
+                <input type="date" className="mv-input mt-1" required value={expiryDate} onChange={e => setExpiryDate(e.target.value)} />
+              </div>
+            </div>
+            <button type="submit" className="mv-btn mv-btn-primary w-full mt-2">Add Unit to Inventory</button>
+          </form>
+        </Card>
+      )}
+
+      <Card>
+        {loading ? <div className="p-4 text-center text-sm text-gray-500">Loading inventory...</div> :
+          <table className="mv-table">
+            <thead><tr><th>Blood Group</th><th>Component Type</th><th>Available Units</th></tr></thead>
+            <tbody>
+              {inventory.map((inv, i) => (
+                <tr key={i}>
+                  <td className="font-semibold text-red-500">{inv.blood_group}</td>
+                  <td>{inv.component}</td>
+                  <td><Pill_ tone="green">{inv.available_units} units</Pill_></td>
+                </tr>
+              ))}
+              {inventory.length === 0 && <tr><td colSpan="3" className="text-center py-6 text-gray-500">Inventory is empty.</td></tr>}
+            </tbody>
+          </table>
+        }
+      </Card>
+    </div>
+  );
+};
+
+const PatientBloodRequestsView = ({ currentUser }) => {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  
+  const [bloodGroup, setBloodGroup] = useState("O+");
+  const [component, setComponent] = useState("WHOLE_BLOOD");
+  const [units, setUnits] = useState(1);
+  const [urgency, setUrgency] = useState("ROUTINE");
+
+  const fetchRequests = async () => {
+    try {
+      const data = await bloodBankService.getRequests();
+      setRequests(data.filter(r => r.patient_id === currentUser?.user_id));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRequests();
+  }, [currentUser]);
+
+  const handleRequestSubmit = async (e) => {
+    e.preventDefault();
+    setActionLoading(true);
+    try {
+      await bloodBankService.createRequest({
+        blood_group: bloodGroup,
+        component: component,
+        units_needed: units,
+        urgency: urgency
+      });
+      setBloodGroup("O+");
+      setUnits(1);
+      await fetchRequests();
+    } catch (err) {
+      alert("Failed to create blood request.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <SectionHeader icon={Droplet} title="My Blood Requests" desc="Request blood units for upcoming procedures" />
+      
+      <Card className="mb-4">
+        <h4 className="font-semibold text-sm mb-3">Submit New Request</h4>
+        <form onSubmit={handleRequestSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div>
+            <label className="text-xs font-semibold text-gray-500">BLOOD GROUP</label>
+            <select className="mv-input mt-1" value={bloodGroup} onChange={e => setBloodGroup(e.target.value)}>
+              {["O+", "O-", "A+", "A-", "B+", "B-", "AB+", "AB-"].map(bg => <option key={bg} value={bg}>{bg}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500">COMPONENT</label>
+            <select className="mv-input mt-1" value={component} onChange={e => setComponent(e.target.value)}>
+              {["WHOLE_BLOOD", "RED_CELLS", "PLATELETS", "PLASMA"].map(c => <option key={c} value={c}>{c.replace("_", " ")}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500">UNITS NEEDED</label>
+            <input type="number" min="1" max="20" className="mv-input mt-1" required value={units} onChange={e => setUnits(Number(e.target.value))} />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500">URGENCY</label>
+            <select className="mv-input mt-1" value={urgency} onChange={e => setUrgency(e.target.value)}>
+              {["ROUTINE", "URGENT", "EMERGENCY"].map(u => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </div>
+          <div className="md:col-span-4 flex justify-end">
+            <button type="submit" className="mv-btn mv-btn-primary" disabled={actionLoading}>Submit Request</button>
+          </div>
+        </form>
+      </Card>
+
+      <Card>
+        {loading ? <div className="p-4 text-center text-sm text-gray-500">Loading requests...</div> :
+          <table className="mv-table">
+            <thead><tr><th>Req ID</th><th>Blood Group</th><th>Component</th><th>Units</th><th>Urgency</th><th>Status</th></tr></thead>
+            <tbody>
+              {requests.map(r => (
+                <tr key={r.request_id}>
+                  <td className="text-xs mv-font-mono" title={r.request_id}>{r.request_id.slice(0, 8)}...</td>
+                  <td className="font-semibold text-red-500">{r.blood_group}</td>
+                  <td>{r.component}</td>
+                  <td>{r.units_needed}</td>
+                  <td><Pill_ tone={r.urgency === "EMERGENCY" ? "red" : r.urgency === "URGENT" ? "amber" : "blue"}>{r.urgency}</Pill_></td>
+                  <td><Pill_ tone={r.status === "PENDING" ? "amber" : r.status === "FULFILLED" ? "green" : "red"}>{r.status}</Pill_></td>
+                </tr>
+              ))}
+              {requests.length === 0 && <tr><td colSpan="6" className="text-center py-6 text-gray-500">No requests found.</td></tr>}
+            </tbody>
+          </table>
+        }
+      </Card>
+    </div>
+  );
+};
+
+const BloodRequestsView = () => {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [rejectingFor, setRejectingFor] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
+
+  const fetchRequests = async () => {
+    try {
+      const data = await bloodBankService.getRequests();
+      setRequests(data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRequests();
+  }, []);
+
+  const handleFulfill = async (id) => {
+    setActionLoading(true);
+    try {
+      await bloodBankService.fulfillRequest(id);
+      await fetchRequests();
+    } catch (err) {
+      alert("Failed to fulfill request. " + (err.response?.data?.detail || ""));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRejectSubmit = async (e) => {
+    e.preventDefault();
+    if (!rejectReason) return;
+    setActionLoading(true);
+    try {
+      await bloodBankService.rejectRequest(rejectingFor, rejectReason);
+      setRejectingFor(null);
+      setRejectReason("");
+      await fetchRequests();
+    } catch (err) {
+      alert("Failed to reject request.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <SectionHeader icon={Activity} title="Blood Requests" desc="Incoming requests for blood units" />
+      
+      {rejectingFor && (
+        <Card className="mb-4 border-red-200 bg-red-50/30">
+          <div className="flex justify-between items-center mb-2">
+            <h4 className="font-semibold text-sm text-red-700">Reject Request</h4>
+            <button className="text-xs text-gray-500 hover:text-gray-700" onClick={() => setRejectingFor(null)}>Cancel</button>
+          </div>
+          <form onSubmit={handleRejectSubmit} className="space-y-3">
+            <div>
+              <label className="text-xs font-semibold text-gray-500">REASON FOR REJECTION</label>
+              <input className="mv-input mt-1 border-red-200 focus:border-red-500" required value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="e.g. Insufficient stock" />
+            </div>
+            <button type="submit" className="mv-btn mv-btn-danger w-full mt-2" disabled={actionLoading}>Confirm Rejection</button>
+          </form>
+        </Card>
+      )}
+
+      <Card>
+        {loading ? <div className="p-4 text-center text-sm text-gray-500">Loading requests...</div> :
+          <table className="mv-table">
+            <thead><tr><th>Req ID</th><th>Patient</th><th>Blood Group</th><th>Component</th><th>Units</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>
+              {requests.map(r => (
+                <tr key={r.request_id}>
+                  <td className="text-xs mv-font-mono" title={r.request_id}>{r.request_id.slice(0, 6)}...</td>
+                  <td className="text-xs mv-font-mono">{r.patient_id.slice(0, 6)}...</td>
+                  <td className="font-semibold text-red-500">{r.blood_group}</td>
+                  <td>{r.component_type}</td>
+                  <td>{r.units_requested}</td>
+                  <td>
+                    <Pill_ tone={r.status === "PENDING" ? "amber" : r.status === "FULFILLED" ? "green" : "red"}>{r.status}</Pill_>
+                  </td>
+                  <td>
+                    {r.status === "PENDING" && (
+                      <div className="flex gap-2">
+                        <button className="mv-btn mv-btn-primary text-xs py-1 px-2" disabled={actionLoading} onClick={() => handleFulfill(r.request_id)}>Fulfill</button>
+                        <button className="mv-btn mv-btn-danger text-xs py-1 px-2" disabled={actionLoading} onClick={() => setRejectingFor(r.request_id)}>Reject</button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {requests.length === 0 && <tr><td colSpan="7" className="text-center py-6 text-gray-500">No requests found.</td></tr>}
+            </tbody>
+          </table>
+        }
+      </Card>
+    </div>
+  );
+};
 
 /* ---------------------------------------------------------------------- */
 /* VIEW REGISTRY                                                          */
+const HospitalAdminOverview = ({ currentUser }) => {
+  const [activeTab, setActiveTab] = useState("staff");
+  const [staff, setStaff] = useState([]);
+  const [network, setNetwork] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [staffRes, netRes] = await Promise.all([
+          hospitalService.getStaff(),
+          hospitalService.getNetwork()
+        ]);
+        setStaff(staffRes);
+        setNetwork(netRes);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <SectionHeader icon={Building2} title="Hospital Administration" desc={`Manage staff and network for ${currentUser?.hospital_name || 'your hospital'}`} />
+      
+      <div className="flex gap-2">
+        <button className={`mv-btn text-xs ${activeTab === 'staff' ? 'mv-btn-primary' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`} onClick={() => setActiveTab('staff')}>Hospital Staff</button>
+        <button className={`mv-btn text-xs ${activeTab === 'network' ? 'mv-btn-primary' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`} onClick={() => setActiveTab('network')}>Extended Network</button>
+      </div>
+
+      <Card>
+        {loading ? <div className="p-4 text-center text-sm text-gray-500">Loading records...</div> :
+          activeTab === 'staff' ? (
+            <table className="mv-table">
+              <thead><tr><th>Name</th><th>Role</th><th>Specialty/Dept</th><th>License #</th><th>Status</th></tr></thead>
+              <tbody>
+                {staff.map(s => (
+                  <tr key={s.user_id}>
+                    <td className="font-semibold">{s.full_name}</td>
+                    <td><Pill_ tone={s.role === "DOCTOR" ? "blue" : "indigo"}>{s.role}</Pill_></td>
+                    <td>{s.specialization || s.department || "N/A"}</td>
+                    <td className="mv-font-mono text-xs">{s.license_number}</td>
+                    <td>{s.verified ? <span className="text-green-500 flex items-center gap-1"><Check size={14}/>Verified</span> : <span className="text-amber-500">Pending</span>}</td>
+                  </tr>
+                ))}
+                {staff.length === 0 && <tr><td colSpan="5" className="text-center py-6 text-gray-500">No staff found.</td></tr>}
+              </tbody>
+            </table>
+          ) : (
+            <table className="mv-table">
+              <thead><tr><th>Organization Name</th><th>Type</th><th>Email</th></tr></thead>
+              <tbody>
+                {network.map(n => (
+                  <tr key={n.user_id}>
+                    <td className="font-semibold">{n.name}</td>
+                    <td><Pill_ tone={n.type === "Insurer" ? "purple" : "red"}>{n.type}</Pill_></td>
+                    <td className="text-gray-500 text-sm">{n.email}</td>
+                  </tr>
+                ))}
+                {network.length === 0 && <tr><td colSpan="3" className="text-center py-6 text-gray-500">No network partners found.</td></tr>}
+              </tbody>
+            </table>
+          )
+        }
+      </Card>
+    </div>
+  );
+};
+
 /* ---------------------------------------------------------------------- */
 
 const VIEWS = {
@@ -2317,7 +2922,7 @@ const VIEWS = {
     overview: PatientOverview, vault: VaultView, prescriptions: PrescriptionsView, medications: MedicationsView,
     allergies: AllergiesView, labs: LabsView, emergency: EmergencyInfoView, ai: AIAssistantView,
     vitals: VitalsHistoryView, "access-requests": AccessRequestsView, "active-consents": ActiveConsentsView, "access-history": AccessHistoryView, fraud: FraudAlertsView,
-    vaccinations: VaccinationsView,
+    vaccinations: VaccinationsView, blood: PatientBloodRequestsView,
   },
   doctor: { overview: DoctorOverview, search: PatientSearchView, prescribe: CreatePrescriptionView, "clinical-ai": ClinicalAIView, history: PatientHistoryView, "care-team": DoctorCareTeamView },
   nurse: { overview: NurseOverview, meds: MedAdminView, vitals: VitalsManagementView },
@@ -2326,6 +2931,7 @@ const VIEWS = {
   lab: { overview: LabOverview, requests: LabRequestsView },
   blood_bank: { overview: BloodBankOverview, inventory: BloodInventoryView, requests: BloodRequestsView },
   admin: { overview: AdminOverview, "ai-center": AICenterView, security: SecurityCenterView, audit: AuditView, analytics: AnalyticsView, users: UsersView },
+  hospital_admin: { overview: HospitalAdminOverview },
 };
 
 /* ---------------------------------------------------------------------- */
@@ -2370,9 +2976,10 @@ const REGISTER_ROLES = [
   { id: "LAB", label: "Lab Technician", icon: FlaskConical, desc: "Upload & manage lab reports" },
   { id: "INSURER", label: "Insurance Provider", icon: Building2, desc: "Claims review & fraud monitoring" },
   { id: "BLOOD_BANK", label: "Blood Bank", icon: Droplet, desc: "Inventory & fulfillment" },
+  { id: "HOSPITAL_ADMIN", label: "Hospital Admin", icon: Building2, desc: "Manage hospital staff & network" },
 ];
 
-const PROFESSIONAL_ROLES = ["DOCTOR", "NURSE", "PHARMACIST", "LAB", "INSURER", "BLOOD_BANK"];
+const PROFESSIONAL_ROLES = ["DOCTOR", "NURSE", "PHARMACIST", "LAB", "INSURER", "BLOOD_BANK", "HOSPITAL_ADMIN"];
 
 const FieldRow = ({ label, children }) => (
   <div>
@@ -2449,7 +3056,9 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
         if (form.blood_group) payload.blood_group = form.blood_group;
       }
       if (isProfessional) {
-        payload.license_number = form.license_number;
+        if (selectedRole !== "HOSPITAL_ADMIN") {
+          payload.license_number = form.license_number;
+        }
         if (isDoctor) {
           payload.specialization = form.specialization;
           payload.hospital_name = form.hospital_name;
@@ -2457,6 +3066,9 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
         if (isNurse) {
           payload.hospital_name = form.hospital_name;
           payload.department = form.department;
+        }
+        if (selectedRole === "HOSPITAL_ADMIN") {
+          payload.hospital_name = form.hospital_name;
         }
         if (["LAB", "PHARMACIST", "INSURER", "BLOOD_BANK"].includes(selectedRole)) {
           payload.organization_name = form.organization_name;
@@ -2597,6 +3209,11 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
                 <FieldRow label="License Number *">
                   <RegInput placeholder="e.g. MCI-2024-88213" value={form.license_number} onChange={set("license_number")} required />
                 </FieldRow>
+                {selectedRole !== "HOSPITAL_ADMIN" && (
+                  <FieldRow label="License Number *">
+                    <RegInput placeholder="e.g. MCI-2024-88213" value={form.license_number} onChange={set("license_number")} required />
+                  </FieldRow>
+                )}
                 {isDoctor && <>
                   <FieldRow label="Specialization">
                     <RegInput placeholder="e.g. Cardiology" value={form.specialization} onChange={set("specialization")} />
@@ -2613,6 +3230,11 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
                     <RegInput placeholder="e.g. ICU, General Ward" value={form.department} onChange={set("department")} />
                   </FieldRow>
                 </>}
+                {selectedRole === "HOSPITAL_ADMIN" && (
+                  <FieldRow label="Hospital Name">
+                    <RegInput placeholder="e.g. City General Hospital" value={form.hospital_name} onChange={set("hospital_name")} required />
+                  </FieldRow>
+                )}
                 {["LAB", "PHARMACIST", "INSURER", "BLOOD_BANK"].includes(selectedRole) && (
                   <FieldRow label={selectedRole === "LAB" ? "Lab Name" : selectedRole === "PHARMACIST" ? "Pharmacy Name" : selectedRole === "INSURER" ? "Company Name" : "Facility Name"}>
                     <RegInput placeholder="Organization name" value={form.organization_name} onChange={set("organization_name")} />
@@ -2809,6 +3431,7 @@ export default function CryptcareApp() {
   const [loadingApp, setLoadingApp] = useState(true);
   const [showRegister, setShowRegister] = useState(false);
   const [registeredSuccess, setRegisteredSuccess] = useState(false);
+  const [notifications, setNotifications] = useState([]);
 
   useEffect(() => {
     const init = async () => {
@@ -2817,6 +3440,9 @@ export default function CryptcareApp() {
         try {
           const me = await authService.getMe();
           setCurrentUser(me);
+          
+          const notifs = await notificationService.getAll();
+          setNotifications(notifs || []);
         } catch (e) {
           localStorage.removeItem('access_token');
         }
@@ -2866,6 +3492,7 @@ export default function CryptcareApp() {
     { id: "insurer", icon: Building2 },
     { id: "blood_bank", icon: Droplet },
     { id: "admin", icon: ShieldCheck },
+    { id: "hospital_admin", icon: Building2 },
   ];
 
   // Try to find the matching role icon, default to CircleUser
@@ -2938,26 +3565,34 @@ export default function CryptcareApp() {
               {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
             </button>
             <div className="relative">
-              <button className="mv-glass p-2 rounded-lg relative mv-focusable" onClick={() => setSidebarOpen(prev => ({ ...prev, notif: !prev.notif }))}>
-                <Bell size={16} />
-                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full text-[9px] flex items-center justify-center font-bold text-white" style={{ background: "var(--red)" }}>3</span>
+              <button className="w-9 h-9 rounded-xl flex items-center justify-center text-gray-500 hover:bg-black/5 dark:hover:bg-white/5 relative mv-focusable" onClick={() => setSidebarOpen(s => ({ ...s, notif: !s.notif }))}>
+                <Bell size={18} />
+                {notifications.filter(n => !n.is_read).length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full text-[9px] flex items-center justify-center font-bold text-white" style={{ background: "var(--red)" }}>
+                    {notifications.filter(n => !n.is_read).length}
+                  </span>
+                )}
               </button>
               {sidebarOpen.notif && (
                 <div className="absolute right-0 top-full mt-2 w-72 mv-glass rounded-xl p-3 z-30 shadow-xl" style={{ background: "var(--panel-solid)" }}>
                   <div className="flex items-center justify-between mb-2 pb-2 border-b" style={{ borderColor: "var(--border)" }}>
                     <span className="font-semibold text-sm">Notifications</span>
-                    <button className="text-xs text-blue-500">Mark all read</button>
+                    <button className="text-xs text-blue-500" onClick={async () => {
+                      await api.put('/notifications/mark-all-read');
+                      setNotifications(n => n.map(x => ({ ...x, is_read: true })));
+                    }}>Mark all read</button>
                   </div>
                   <div className="space-y-2 max-h-64 overflow-y-auto mv-scroll">
-                    {notificationsList.map(n => (
-                      <div key={n.id} className="flex gap-2 items-start p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-                        <div className="mt-0.5">{n.type === "Break-Glass" ? <Siren size={14} className="text-red-500" /> : <Bell size={14} className="text-blue-500" />}</div>
+                    {notifications.map(n => (
+                      <div key={n.notification_id} className="flex gap-2 items-start p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                        <div className="mt-0.5">{n.type === "BREAK_GLASS" ? <Siren size={14} className="text-red-500" /> : <Bell size={14} className="text-blue-500" />}</div>
                         <div>
-                          <p className="text-xs font-medium" style={{ color: n.read ? "var(--text-dim)" : "var(--text)" }}>{n.message}</p>
-                          <p className="text-[10px] mt-1" style={{ color: "var(--text-faint)" }}>{n.time}</p>
+                          <p className="text-xs font-medium" style={{ color: n.is_read ? "var(--text-dim)" : "var(--text)" }}>{n.message}</p>
+                          <p className="text-[10px] mt-1" style={{ color: "var(--text-faint)" }}>{new Date(n.created_at).toLocaleString()}</p>
                         </div>
                       </div>
                     ))}
+                    {notifications.length === 0 && <div className="text-center text-xs text-gray-500 py-4">No notifications</div>}
                   </div>
                 </div>
               )}

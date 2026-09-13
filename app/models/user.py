@@ -17,6 +17,7 @@ class RoleEnum(str, enum.Enum):
     INSURER = "INSURER"
     BLOOD_BANK = "BLOOD_BANK"  # Phase 11
     ADMIN = "ADMIN"
+    HOSPITAL_ADMIN = "HOSPITAL_ADMIN"
 
 
 class UserStatusEnum(str, enum.Enum):
@@ -121,3 +122,11 @@ class BloodBankProfile(Base):
     license_number: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     facility_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
+
+class HospitalAdminProfile(Base):
+    __tablename__ = "hospital_admin_profiles"
+
+    admin_profile_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.user_id", ondelete="CASCADE"), unique=True)
+    hospital_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    verified: Mapped[bool] = mapped_column(Boolean, default=True)
