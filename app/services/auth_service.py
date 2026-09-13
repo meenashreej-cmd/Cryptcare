@@ -127,6 +127,7 @@ def register_user(db: Session, payload: RegisterRequest) -> tuple[User, str | No
     license_verified = False
     if payload.role == RoleEnum.PATIENT:
         db.add(PatientProfile(
+            patient_id=user.user_id,
             user_id=user.user_id,
             dob=payload.dob,
             gender=payload.gender,

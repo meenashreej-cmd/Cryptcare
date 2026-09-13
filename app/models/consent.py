@@ -82,6 +82,7 @@ class ConsentRequest(Base):
     # audit trail and timeline, and so the mandatory patient notification
     # knows to use different (more urgent) copy.
     is_break_glass: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_delegation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

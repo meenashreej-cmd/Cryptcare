@@ -19,7 +19,7 @@ class LabTestRequest(Base):
 
     request_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     patient_id: Mapped[str] = mapped_column(String(36), ForeignKey("patient_profiles.patient_id"), nullable=False)
-    doctor_id: Mapped[str] = mapped_column(String(36), ForeignKey("doctor_profiles.doctor_id"), nullable=False)
+    doctor_id: Mapped[str] = mapped_column(String(36), ForeignKey("doctor_profiles.doctor_id"), nullable=True)
     test_name: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[LabRequestStatusEnum] = mapped_column(Enum(LabRequestStatusEnum), default=LabRequestStatusEnum.REQUESTED)
     assigned_lab_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.user_id"), nullable=True)

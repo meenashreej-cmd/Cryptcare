@@ -12,6 +12,7 @@ class ConsentRequestCreate(BaseModel):
     patient_id: str = Field(..., description="PatientProfile.patient_id being requested")
     resource_type: ResourceTypeEnum
     permission: PermissionEnum
+    allow_delegation: bool = False
 
 
 class ConsentApproveRequest(BaseModel):

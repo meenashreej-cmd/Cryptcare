@@ -141,9 +141,16 @@ def get_prescriptions(db: Session, current_user: CurrentUser, patient_id: str) -
 
 
 def add_allergy(db: Session, current_user: CurrentUser, patient_id: str, payload: AllergyCreateRequest) -> Allergy:
-    if current_user.role != "PATIENT" or current_user.id != _resolve_user_id_for_patient(db, patient_id):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the patient can add their own allergies")
-
+    if current_user.role == "PATIENT":
+        if current_user.id != _resolve_user_id_for_patient(db, patient_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the patient can add their own allergies")
+    elif current_user.role in ("DOCTOR", "NURSE"):
+        if not check_vault_access(db, current_user, patient_id, "allergies", "write"):
+            _write_access_log(db, current_user.id, "allergies", patient_id, AccessActionEnum.DENIED, patient_id=patient_id)
+            db.commit()
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "No active consent to write allergies for this patient")
+    else:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Role not permitted to add allergies")
     allergy = Allergy(patient_id=patient_id, allergen=payload.allergen, severity=payload.severity)
     db.add(allergy)
     _write_access_log(db, current_user.id, "allergies", patient_id, AccessActionEnum.WRITE, patient_id=patient_id)
@@ -165,9 +172,16 @@ def get_allergies(db: Session, current_user: CurrentUser, patient_id: str) -> li
 
 
 def add_vaccination(db: Session, current_user: CurrentUser, patient_id: str, payload: VaccinationCreateRequest) -> Vaccination:
-    if current_user.role != "PATIENT" or current_user.id != _resolve_user_id_for_patient(db, patient_id):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the patient can add their own vaccination records")
-
+    if current_user.role == "PATIENT":
+        if current_user.id != _resolve_user_id_for_patient(db, patient_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the patient can add their own vaccination records")
+    elif current_user.role in ("DOCTOR", "NURSE"):
+        if not check_vault_access(db, current_user, patient_id, "vaccinations", "write"):
+            _write_access_log(db, current_user.id, "vaccinations", patient_id, AccessActionEnum.DENIED, patient_id=patient_id)
+            db.commit()
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "No active consent to write vaccinations for this patient")
+    else:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Role not permitted to add vaccinations")
     vaccination = Vaccination(
         patient_id=patient_id,
         vaccine_name=payload.vaccine_name,

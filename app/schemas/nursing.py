@@ -3,6 +3,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from app.models.consent import PermissionEnum, ResourceTypeEnum
+
 
 class VitalSignCreateRequest(BaseModel):
     patient_id: str = Field(..., description="PatientProfile.patient_id this observation is for")
@@ -34,3 +36,29 @@ class VitalSignResponse(BaseModel):
 
 class VitalSignListResponse(BaseModel):
     vitals: list[VitalSignResponse]
+
+
+class NurseAssignmentRequest(BaseModel):
+    patient_id: str
+    nurse_id: str
+    resource_type: ResourceTypeEnum
+    permission: PermissionEnum
+
+
+class NurseAssignmentResponse(BaseModel):
+    assignment_id: str
+    patient_id: str
+    doctor_id: str
+    nurse_id: str
+    resource_type: ResourceTypeEnum
+    permission: PermissionEnum
+    status: str
+    created_at: datetime
+    removed_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class NurseAssignmentListResponse(BaseModel):
+    assignments: list[NurseAssignmentResponse]

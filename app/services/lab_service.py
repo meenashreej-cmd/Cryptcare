@@ -67,15 +67,15 @@ def _resolve_user_id_for_patient(db: Session, patient_id: str) -> str | None:
 
 
 def create_lab_test_request(db: Session, current_user: CurrentUser, payload: LabTestRequestCreate) -> LabTestRequest:
-    if current_user.role != "DOCTOR":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors can request lab tests")
+    if current_user.role not in ("DOCTOR", "PATIENT"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors and patients can request lab tests")
 
     if not check_vault_access(db, current_user, payload.patient_id, "lab_requests", "write"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "No active consent to request lab tests for this patient")
 
     request = LabTestRequest(
         patient_id=payload.patient_id,
-        doctor_id=current_user.id,  # endpoint resolves to doctor_profiles.doctor_id
+        doctor_id=current_user.id if current_user.role == "DOCTOR" else None,
         test_name=payload.test_name,
         status=LabRequestStatusEnum.REQUESTED,
     )
@@ -153,16 +153,22 @@ def upload_report(
     summary_text: str,
     document_type: DocumentTypeEnum = DocumentTypeEnum.LAB_SUMMARY,
 ) -> LabReport:
-    if current_user.role != "LAB":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only lab staff can upload reports")
+    if current_user.role not in ("LAB", "PATIENT"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only lab staff and patients can upload reports")
 
     request = db.query(LabTestRequest).filter(LabTestRequest.request_id == request_id).first()
     if not request:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lab test request not found")
-    if request.status != LabRequestStatusEnum.IN_PROGRESS:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Request must be IN_PROGRESS before a report can be uploaded")
-    if request.assigned_lab_user_id != current_user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "This request is assigned to a different lab technician")
+
+    if current_user.role == "LAB":
+        if request.status != LabRequestStatusEnum.IN_PROGRESS:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Request must be IN_PROGRESS before a lab can upload a report")
+        if request.assigned_lab_user_id != current_user.id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "This request is assigned to a different lab technician")
+    else:
+        # Patient is uploading their own report, bypass the IN_PROGRESS check
+        if request.patient_id != _resolve_user_id_for_patient(db, request.patient_id):
+             raise HTTPException(status.HTTP_403_FORBIDDEN, "Patients can only upload their own reports")
 
     file_path, file_size = _store_encrypted_file(file, document_type)
     summary_ct = encrypt(summary_text)

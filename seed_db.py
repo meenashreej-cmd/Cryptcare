@@ -87,6 +87,7 @@ def seed_db():
             "Aarav Mehta", RoleEnum.PATIENT,
         )
         patient_profile = PatientProfile(
+            patient_id=patient_user.user_id,
             user_id=patient_user.user_id,
             dob=date(1991, 4, 14),
             gender="Male",
@@ -103,6 +104,7 @@ def seed_db():
             "Dr. Lena Cross", RoleEnum.DOCTOR, mfa=True,
         )
         doctor_profile = DoctorProfile(
+            doctor_id=doctor_user.user_id,
             user_id=doctor_user.user_id,
             license_number="MCI-DOC-2024-001",
             specialization="Cardiology",
@@ -118,6 +120,7 @@ def seed_db():
             "Priya Rao", RoleEnum.NURSE, mfa=True,
         )
         nurse_profile = NurseProfile(
+            nurse_id=nurse_user.user_id,
             user_id=nurse_user.user_id,
             license_number="NMC-NURSE-2024-001",
             hospital_name="City General Hospital",
@@ -133,6 +136,7 @@ def seed_db():
             "Imran Sheikh", RoleEnum.PHARMACIST, mfa=True,
         )
         pharmacist_profile = PharmacistProfile(
+            pharmacist_id=pharmacist_user.user_id,
             user_id=pharmacist_user.user_id,
             license_number="PCI-PHARM-2024-001",
             pharmacy_name="Central Pharmacy",
@@ -147,6 +151,7 @@ def seed_db():
             "Apollo Diagnostics Lab", RoleEnum.LAB,
         )
         lab_profile = LabProfile(
+            lab_id=lab_user.user_id,
             user_id=lab_user.user_id,
             license_number="NABL-LAB-2024-001",
             lab_name="Apollo Diagnostics",
@@ -161,6 +166,7 @@ def seed_db():
             "Northwind Health", RoleEnum.INSURER,
         )
         insurer_profile = InsurerProfile(
+            insurer_id=insurer_user.user_id,
             user_id=insurer_user.user_id,
             license_number="IRDAI-INS-2024-001",
             company_name="Northwind Health Insurance",
@@ -175,6 +181,7 @@ def seed_db():
             "City Blood Bank", RoleEnum.BLOOD_BANK,
         )
         blood_bank_profile = BloodBankProfile(
+            blood_bank_id=blood_bank_user.user_id,
             user_id=blood_bank_user.user_id,
             license_number="NBTC-BB-2024-001",
             facility_name="City Blood Bank",
