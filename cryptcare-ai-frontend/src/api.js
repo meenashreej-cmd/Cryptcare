@@ -231,6 +231,22 @@ export const nursingService = {
     const res = await api.get(`/nursing/patients/${patientId}/vitals`);
     return res.data;
   },
+  assignNurse: async (payload) => {
+    const res = await api.post('/nursing/assign', payload);
+    return res.data;
+  },
+  removeNurse: async (assignmentId) => {
+    const res = await api.post(`/nursing/assignments/${assignmentId}/remove`);
+    return res.data;
+  },
+  getAssignments: async () => {
+    const res = await api.get('/nursing/assignments');
+    return res.data;
+  },
+  getNursePatients: async () => {
+    const res = await api.get('/nursing/my-patients');
+    return res.data;
+  },
 };
 
 // ── PHARMACY ───────────────────────────────────────────────────────────────

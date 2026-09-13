@@ -147,12 +147,11 @@ const NAV = {
     { id: "prescribe", label: "Create Prescription", icon: FileSignature },
     { id: "clinical-ai", label: "AI Clinical Safety", icon: Sparkles },
     { id: "history", label: "Patient History", icon: History },
+    { id: "care-team", label: "Care Team Management", icon: Users },
   ],
   nurse: [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
     { id: "meds", label: "Medication Administration", icon: ClipboardCheck },
-    { id: "qr", label: "QR Patient Verification", icon: QrCode },
-    { id: "schedule", label: "Medication Schedule", icon: CalendarClock },
     { id: "vitals", label: "Vitals Management", icon: HeartPulse },
   ],
   pharmacist: [
@@ -600,12 +599,58 @@ const MedicationsView = () => (
 );
 
 const AllergiesView = ({ currentUser }) => {
-  const { data, loading } = useApi(() => vaultService.getAllergies(currentUser?.user_id), [currentUser?.user_id]);
+  const { data, loading, mutate } = useApi(() => vaultService.getAllergies(currentUser?.user_id), [currentUser?.user_id]);
   const records = data || [];
+  
+  const [showAdd, setShowAdd] = useState(false);
+  const [allergen, setAllergen] = useState("");
+  const [severity, setSeverity] = useState("Mild");
+  const [submitting, setSubmitting] = useState(false);
+  
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await vaultService.addAllergy({ patient_id: currentUser.user_id, allergen, severity });
+      await mutate();
+      setShowAdd(false);
+      setAllergen("");
+      setSeverity("Mild");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to add allergy");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <SectionHeader icon={AlertTriangle} title="Allergy Records" desc="Documented allergens and reaction severity" />
-      {loading ? <Card><p className="text-center py-8 text-gray-400">Loading…</p></Card> : (
+      <div className="flex items-center justify-between">
+        <SectionHeader icon={AlertTriangle} title="Allergy Records" desc="Documented allergens and reaction severity" />
+        <button className="mv-btn mv-btn-primary text-xs py-1.5 px-3" onClick={() => setShowAdd(!showAdd)}>
+          {showAdd ? "Cancel" : "+ Add Allergy"}
+        </button>
+      </div>
+      
+      {showAdd && (
+        <Card className="mb-4">
+          <form onSubmit={handleAdd} className="space-y-3">
+            <h4 className="font-semibold text-sm">Add New Allergy</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <input className="mv-input" placeholder="Allergen (e.g. Penicillin)" value={allergen} onChange={e => setAllergen(e.target.value)} required />
+              <select className="mv-input" value={severity} onChange={e => setSeverity(e.target.value)}>
+                <option>Mild</option><option>Moderate</option><option>Severe</option><option>Life-Threatening</option>
+              </select>
+            </div>
+            <button type="submit" className="mv-btn mv-btn-primary w-full" disabled={submitting || !allergen}>
+              {submitting ? "Saving..." : "Save Record"}
+            </button>
+          </form>
+        </Card>
+      )}
+
+      {loading ? <Card><p className="text-center py-8 text-gray-400">Loading.</p></Card> : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {records.length === 0 && <p className="text-gray-400 text-sm">No allergy records found.</p>}
           {records.map(a => (
@@ -624,14 +669,88 @@ const AllergiesView = ({ currentUser }) => {
 };
 
 const LabsView = ({ currentUser }) => {
-  const { data, loading } = useApi(
-    () => api.get(`/lab/reports?patient_id=${currentUser?.user_id}`).then(r => r.data).catch(() => []),
-    [currentUser?.user_id]
-  );
-  const reports = Array.isArray(data) ? data : [];
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  
+  const [showAdd, setShowAdd] = useState(false);
+  const [testName, setTestName] = useState("");
+  const [summary, setSummary] = useState("");
+  const [file, setFile] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const fetchReports = async () => {
+    try {
+      const res = await api.get(`/lab/reports?patient_id=${currentUser?.user_id}`);
+      setReports(Array.isArray(res.data) ? res.data : []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (currentUser) fetchReports();
+  }, [currentUser]);
+
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    if (!file) return alert("Please select a file to upload");
+    setSubmitting(true);
+    try {
+      const reqRes = await api.post('/lab/requests', {
+        patient_id: currentUser.user_id,
+        test_name: testName
+      });
+      const reqId = reqRes.data.request_id;
+      
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('summary_text', summary);
+      formData.append('document_type', 'LAB_SUMMARY');
+      
+      await api.post(`/lab/requests/${reqId}/report`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      
+      await fetchReports();
+      setShowAdd(false);
+      setTestName("");
+      setSummary("");
+      setFile(null);
+    } catch (err) {
+      console.error(err);
+      alert(err?.response?.data?.detail || "Failed to upload report");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <SectionHeader icon={FlaskConical} title="Laboratory Reports" desc="Diagnostic tests and results" />
+      <div className="flex items-center justify-between">
+        <SectionHeader icon={FlaskConical} title="Laboratory Reports" desc="Diagnostic tests and results" />
+        <button className="mv-btn mv-btn-primary text-xs py-1.5 px-3" onClick={() => setShowAdd(!showAdd)}>
+          {showAdd ? "Cancel" : "+ Upload Report"}
+        </button>
+      </div>
+      
+      {showAdd && (
+        <Card className="mb-4">
+          <form onSubmit={handleAdd} className="space-y-3">
+            <h4 className="font-semibold text-sm">Upload New Lab Report</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <input className="mv-input" placeholder="Test Name (e.g. Complete Blood Count)" value={testName} onChange={e => setTestName(e.target.value)} required />
+              <input type="file" className="mv-input" onChange={e => setFile(e.target.files[0])} accept=".pdf,.txt,.csv" required />
+            </div>
+            <textarea className="mv-input" placeholder="Summary or Notes" value={summary} onChange={e => setSummary(e.target.value)} required />
+            <button type="submit" className="mv-btn mv-btn-primary w-full" disabled={submitting || !file || !testName || !summary}>
+              {submitting ? "Uploading..." : "Upload Report"}
+            </button>
+          </form>
+        </Card>
+      )}
+
       <Card>
         <table className="mv-table">
           <thead><tr><th>Test</th><th>Summary</th><th>Uploaded</th><th>Type</th></tr></thead>
@@ -641,8 +760,8 @@ const LabsView = ({ currentUser }) => {
             {reports.map(r => (
               <tr key={r.report_id}>
                 <td className="font-medium">{r.test_name || r.document_type}</td>
-                <td className="text-xs" style={{ color: "var(--text-dim)" }}>{r.report_summary || "Encrypted — view report to decrypt"}</td>
-                <td className="text-xs">{r.uploaded_at ? new Date(r.uploaded_at).toLocaleDateString() : "—"}</td>
+                <td className="text-xs" style={{ color: "var(--text-dim)" }}>{r.report_summary || "Encrypted - view report to decrypt"}</td>
+                <td className="text-xs">{r.uploaded_at ? new Date(r.uploaded_at).toLocaleDateString() : "-"}</td>
                 <td><Pill_ tone="teal">{r.document_type || "LAB_SUMMARY"}</Pill_></td>
               </tr>
             ))}
@@ -656,6 +775,41 @@ const LabsView = ({ currentUser }) => {
 const EmergencyInfoView = ({ currentUser }) => {
   const [bg, setBg] = useState(false);
   const [active, setActive] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  
+  const [contactName, setContactName] = useState(currentUser?.patient_profile?.emergency_contact_name || "");
+  const [contactPhone, setContactPhone] = useState(currentUser?.patient_profile?.emergency_contact_phone || "");
+  const [bloodGroup, setBloodGroup] = useState(currentUser?.patient_profile?.blood_group || "");
+
+  const saveContactInfo = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      const token = localStorage.getItem("access_token");
+      const res = await fetch("http://127.0.0.1:8000/api/v1/emergency/contact", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          emergency_contact_name: contactName,
+          emergency_contact_phone: contactPhone,
+          blood_group: bloodGroup
+        })
+      });
+      if (!res.ok) throw new Error("Failed to update emergency contact info");
+      alert("Emergency contact information saved successfully!");
+      setEditMode(false);
+    } catch (err) {
+      console.error(err);
+      alert("Error saving emergency info");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <SectionHeader icon={Siren} title="Emergency Information" desc="Critical data visible to first responders"
@@ -663,10 +817,64 @@ const EmergencyInfoView = ({ currentUser }) => {
           <Siren size={14} /> {active ? "Emergency Mode Active" : "Activate Emergency Mode"}
         </button>} />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard icon={CircleUser} label="Patient" value={currentUser?.full_name || "—"} tone="teal" />
+        <StatCard icon={CircleUser} label="Patient" value={currentUser?.full_name || "-"} tone="teal" />
         <StatCard icon={ShieldCheck} label="Account Status" value={currentUser?.status || "ACTIVE"} tone="green" />
         <StatCard icon={Siren} label="Emergency Access" value={active ? "ACTIVE" : "Off"} tone={active ? "red" : "blue"} />
       </div>
+
+      <Card>
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="font-semibold text-sm">Emergency Contact Details</h4>
+          {!editMode && (
+            <button className="mv-btn mv-btn-secondary text-xs py-1 px-3" onClick={() => setEditMode(true)}>
+              Edit Details
+            </button>
+          )}
+        </div>
+        
+        {editMode ? (
+          <form onSubmit={saveContactInfo} className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium mb-1">Contact Name</label>
+                <input className="mv-input" value={contactName} onChange={e => setContactName(e.target.value)} placeholder="e.g. Jane Doe" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Contact Phone</label>
+                <input className="mv-input" value={contactPhone} onChange={e => setContactPhone(e.target.value)} placeholder="e.g. 555-0198" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Blood Group</label>
+                <input className="mv-input" value={bloodGroup} onChange={e => setBloodGroup(e.target.value)} placeholder="e.g. O+" />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button type="submit" className="mv-btn mv-btn-primary text-sm py-1.5 px-4" disabled={submitting}>
+                {submitting ? "Saving..." : "Save Changes"}
+              </button>
+              <button type="button" className="mv-btn mv-btn-secondary text-sm py-1.5 px-4" onClick={() => setEditMode(false)} disabled={submitting}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-xs" style={{ color: "var(--text-faint)" }}>Contact Name</p>
+              <p className="font-medium">{contactName || "Not set"}</p>
+            </div>
+            <div>
+              <p className="text-xs" style={{ color: "var(--text-faint)" }}>Contact Phone</p>
+              <p className="font-medium">{contactPhone || "Not set"}</p>
+            </div>
+            <div>
+              <p className="text-xs" style={{ color: "var(--text-faint)" }}>Blood Group</p>
+              <p className="font-medium">{bloodGroup || "Not set"}</p>
+            </div>
+          </div>
+        )}
+      </Card>
+
       {bg && <BreakGlassModal onClose={() => setBg(false)} onConfirm={() => setActive(true)} />}
     </div>
   );
@@ -680,19 +888,42 @@ const AIAssistantView = ({ currentUser }) => {
   const [input, setInput] = useState("");
   const endRef = useRef(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-  const respond = (q) => {
-    const l = q.toLowerCase();
-    if (l.includes("atorvastatin")) return "Atorvastatin lowers LDL cholesterol. Take it at the same time daily, preferably evening. Common side effects include mild muscle aches.";
-    if (l.includes("metformin")) return "Metformin manages Type 2 diabetes by reducing glucose production in the liver. Take with meals to reduce stomach upset.";
-    if (l.includes("amoxicillin")) return "Amoxicillin is an antibiotic for bacterial infections. Complete the full course even if you feel better. Common side effects include nausea and diarrhea.";
-    if (l.includes("side effect")) return "Side effects vary by medication. For your current prescriptions, the most common are mild gastrointestinal discomfort and occasional fatigue. Report severe symptoms to your doctor.";
-    if (l.includes("interaction")) return "The AI Clinical Safety Agent monitors your prescriptions for drug interactions. No high-risk interactions are currently flagged for your active medications.";
-    return "I can help explain medications, lab result terminology, or general wellness guidance. For anything urgent or symptom-specific, please consult your doctor directly.";
-  };
-  const send = () => {
+  const send = async () => {
     if (!input.trim()) return;
-    setMessages(m => [...m, { from: "user", text: input }, { from: "ai", text: respond(input) }]);
+    const userMessage = input;
+    setMessages(m => [...m, { from: "user", text: userMessage }]);
     setInput("");
+    
+    // Add loading indicator
+    setMessages(m => [...m, { from: "ai", text: "..." }]);
+    
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("http://127.0.0.1:8000/api/v1/ai/chat", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ message: userMessage })
+      });
+      if (!res.ok) throw new Error("Failed to get AI response");
+      const data = await res.json();
+      
+      // Replace loading indicator with actual response
+      setMessages(m => {
+        const newM = [...m];
+        newM[newM.length - 1] = { from: "ai", text: data.reply };
+        return newM;
+      });
+    } catch (err) {
+      console.error(err);
+      setMessages(m => {
+        const newM = [...m];
+        newM[newM.length - 1] = { from: "ai", text: "Sorry, I am currently unable to process your request." };
+        return newM;
+      });
+    }
   };
   return (
     <div className="space-y-4">
@@ -861,11 +1092,63 @@ const ActiveConsentsView = ({ currentUser }) => {
 };
 
 const VaccinationsView = ({ currentUser }) => {
-  const { data, loading } = useApi(() => vaultService.getVaccinations(currentUser?.user_id), [currentUser?.user_id]);
+  const { data, loading, mutate } = useApi(() => vaultService.getVaccinations(currentUser?.user_id), [currentUser?.user_id]);
   const records = data || [];
+  
+  const [showAdd, setShowAdd] = useState(false);
+  const [vaccineName, setVaccineName] = useState("");
+  const [dateAdministered, setDateAdministered] = useState("");
+  const [nextDueDate, setNextDueDate] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await vaultService.addVaccination({ 
+        patient_id: currentUser.user_id, 
+        vaccine_name: vaccineName,
+        date_administered: dateAdministered ? new Date(dateAdministered).toISOString() : null,
+        next_due_date: nextDueDate ? new Date(nextDueDate).toISOString() : null
+      });
+      await mutate();
+      setShowAdd(false);
+      setVaccineName("");
+      setDateAdministered("");
+      setNextDueDate("");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to add vaccination");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <SectionHeader icon={ShieldCheck} title="Vaccination Records" desc="Immunisation history and upcoming doses" />
+      <div className="flex items-center justify-between">
+        <SectionHeader icon={ShieldCheck} title="Vaccination Records" desc="Immunisation history and upcoming doses" />
+        <button className="mv-btn mv-btn-primary text-xs py-1.5 px-3" onClick={() => setShowAdd(!showAdd)}>
+          {showAdd ? "Cancel" : "+ Add Vaccination"}
+        </button>
+      </div>
+      
+      {showAdd && (
+        <Card className="mb-4">
+          <form onSubmit={handleAdd} className="space-y-3">
+            <h4 className="font-semibold text-sm">Add New Vaccination</h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <input className="mv-input" placeholder="Vaccine Name (e.g. COVID-19)" value={vaccineName} onChange={e => setVaccineName(e.target.value)} required />
+              <input type="date" className="mv-input" title="Date Administered" value={dateAdministered} onChange={e => setDateAdministered(e.target.value)} required />
+              <input type="date" className="mv-input" title="Next Due Date (Optional)" value={nextDueDate} onChange={e => setNextDueDate(e.target.value)} />
+            </div>
+            <button type="submit" className="mv-btn mv-btn-primary w-full" disabled={submitting || !vaccineName || !dateAdministered}>
+              {submitting ? "Saving..." : "Save Record"}
+            </button>
+          </form>
+        </Card>
+      )}
+
       <Card>
         <table className="mv-table">
           <thead><tr><th>Vaccine</th><th>Administered</th><th>Next Due</th></tr></thead>
@@ -875,7 +1158,7 @@ const VaccinationsView = ({ currentUser }) => {
             {records.map(v => (
               <tr key={v.vaccination_id}>
                 <td className="font-medium">{v.vaccine_name}</td>
-                <td className="text-xs">{v.date_administered ? new Date(v.date_administered).toLocaleDateString() : "—"}</td>
+                <td className="text-xs">{v.date_administered ? new Date(v.date_administered).toLocaleDateString() : "-"}</td>
                 <td>{v.next_due_date ? <Pill_ tone="amber">{new Date(v.next_due_date).toLocaleDateString()}</Pill_> : <Pill_ tone="green">Complete</Pill_>}</td>
               </tr>
             ))}
@@ -1165,18 +1448,73 @@ const NurseOverview = ({ currentUser }) => {
   );
 };
 
-const MedAdminView = () => (
-  <div className="space-y-4">
-    <SectionHeader icon={ClipboardCheck} title="Medication Administration" desc="Record vitals after administering medications — prescriptions are read-only" />
-    <Card>
-      <p className="text-sm" style={{ color: "var(--text-dim)" }}>
-        Use the <strong>Vitals Management</strong> tab to record patient vital signs after medication administration.
-        Prescription data is fetched live — nurses cannot modify prescriptions (RBAC enforced).
-      </p>
-      <div className="mv-chip blue mt-3"><ShieldCheck size={11} /> RBAC: vitals:write granted · prescriptions:write denied</div>
-    </Card>
-  </div>
-);
+const MedAdminView = () => {
+  const [patients, setPatients] = useState([]);
+  const [patientId, setPatientId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [rx, setRx] = useState([]);
+
+  useEffect(() => {
+    nursingService.getNursePatients().then(data => {
+      setPatients(data || []);
+      if (data && data.length > 0) {
+        setPatientId(data[0].patient_id);
+      }
+    }).catch(err => console.error(err));
+  }, []);
+
+  useEffect(() => {
+    if (!patientId) {
+      setRx([]);
+      return;
+    }
+    setLoading(true);
+    vaultService.getPrescriptions(patientId)
+      .then(data => setRx(data || []))
+      .catch(err => {
+        console.error(err);
+        setRx([]);
+      })
+      .finally(() => setLoading(false));
+  }, [patientId]);
+
+  return (
+    <div className="space-y-4">
+      <SectionHeader icon={ClipboardCheck} title="Medication Administration" desc="View active prescriptions for your assigned patients" />
+      <Card className="space-y-3">
+        <div>
+          <label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>SELECT PATIENT</label>
+          <select className="mv-input mt-1" value={patientId} onChange={e => setPatientId(e.target.value)}>
+            <option value="">Select a patient...</option>
+            {patients.map(p => (
+              <option key={p.patient_id} value={p.patient_id}>{p.patient_id}</option>
+            ))}
+          </select>
+        </div>
+      </Card>
+      
+      {patientId && (
+        <Card>
+          <h4 className="font-semibold text-sm mb-3">Active Prescriptions</h4>
+          <table className="mv-table">
+            <thead><tr><th>Medications</th><th>Issued</th><th>Status</th></tr></thead>
+            <tbody>
+              {loading && <tr><td colSpan="3" className="text-center py-4 text-gray-500">Loading prescriptions...</td></tr>}
+              {!loading && rx.length === 0 && <tr><td colSpan="3" className="text-center py-4 text-gray-500">No prescriptions found. Check patient consent.</td></tr>}
+              {!loading && rx.map(p => (
+                <tr key={p.prescription_id}>
+                  <td>{(p.items || []).map(i => <div key={i.item_id} className="text-sm">{i.medicine_name} {i.dosage}</div>)}</td>
+                  <td className="text-xs">{new Date(p.created_at).toLocaleDateString()}</td>
+                  <td><Pill_ tone={p.status === "ACTIVE" ? "teal" : "blue"}>{p.status}</Pill_></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </div>
+  );
+};
 
 const QRVerifyView = () => {
   const [scanned, setScanned] = useState(false);
@@ -1640,24 +1978,78 @@ const UsersView = () => {
 const VitalsHistoryView = ({ currentUser }) => {
   const [vitals, setVitals] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ hr: "", bps: "", bpd: "", temp: "", spo2: "", notes: "" });
+  const [submitting, setSubmitting] = useState(false);
+
+  const fetchVitals = async () => {
+    try {
+      const data = await nursingService.getVitals(currentUser.user_id);
+      setVitals(data.vitals || []);
+    } catch (err) {
+      console.error("Failed to fetch vitals", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchVitals = async () => {
-      try {
-        const data = await nursingService.getVitals(currentUser.user_id);
-        setVitals(data.vitals || []);
-      } catch (err) {
-        console.error("Failed to fetch vitals", err);
-      } finally {
-        setLoading(false);
-      }
-    };
     if (currentUser) fetchVitals();
   }, [currentUser]);
 
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await api.post('/nursing/vitals', {
+        patient_id: currentUser.user_id,
+        heart_rate_bpm: parseInt(form.hr) || null,
+        blood_pressure_systolic: parseInt(form.bps) || null,
+        blood_pressure_diastolic: parseInt(form.bpd) || null,
+        temperature_celsius: parseFloat(form.temp) || null,
+        spo2_percent: parseInt(form.spo2) || null,
+        notes: form.notes
+      });
+      await fetchVitals();
+      setShowAdd(false);
+      setForm({ hr: "", bps: "", bpd: "", temp: "", spo2: "", notes: "" });
+    } catch (err) {
+      console.error(err);
+      alert(err?.response?.data?.detail || "Failed to add vitals");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <SectionHeader icon={HeartPulse} title="Vitals History" desc="Longitudinal tracking of your vital signs" />
+      <div className="flex items-center justify-between">
+        <SectionHeader icon={HeartPulse} title="Vitals History" desc="Longitudinal tracking of your vital signs" />
+        <button className="mv-btn mv-btn-primary text-xs py-1.5 px-3" onClick={() => setShowAdd(!showAdd)}>
+          {showAdd ? "Cancel" : "+ Record Vitals"}
+        </button>
+      </div>
+      
+      {showAdd && (
+        <Card className="mb-4">
+          <form onSubmit={handleAdd} className="space-y-3">
+            <h4 className="font-semibold text-sm">Record New Vitals</h4>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <input className="mv-input" type="number" placeholder="HR (bpm)" value={form.hr} onChange={e => setForm({...form, hr: e.target.value})} />
+              <input className="mv-input" type="number" placeholder="BP Sys" value={form.bps} onChange={e => setForm({...form, bps: e.target.value})} />
+              <input className="mv-input" type="number" placeholder="BP Dia" value={form.bpd} onChange={e => setForm({...form, bpd: e.target.value})} />
+              <input className="mv-input" type="number" step="0.1" placeholder="Temp (°C)" value={form.temp} onChange={e => setForm({...form, temp: e.target.value})} />
+              <input className="mv-input" type="number" placeholder="SpO2 (%)" value={form.spo2} onChange={e => setForm({...form, spo2: e.target.value})} />
+            </div>
+            <input className="mv-input" placeholder="Notes (optional)" value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} />
+            <button type="submit" className="mv-btn mv-btn-primary w-full" disabled={submitting}>
+              {submitting ? "Saving..." : "Save Record"}
+            </button>
+          </form>
+        </Card>
+      )}
+
       <Card>
         {loading ? <div className="p-4 text-center text-sm text-gray-500">Fetching records...</div> :
           <table className="mv-table">
@@ -1669,13 +2061,14 @@ const VitalsHistoryView = ({ currentUser }) => {
                   <td className="font-medium">{v.heart_rate_bpm} bpm</td>
                   <td>{v.blood_pressure_systolic}/{v.blood_pressure_diastolic}</td>
                   <td>{v.temperature_celsius}°C</td>
-                  <td>{v.spo2_percentage}%</td>
-                  <td className="text-xs" style={{ color: "var(--text-dim)" }}>{v.clinical_notes}</td>
+                  <td>{v.spo2_percent || v.spo2_percentage}%</td>
+                  <td className="text-xs" style={{ color: "var(--text-dim)" }}>{v.notes || v.clinical_notes}</td>
                 </tr>
               ))}
               {vitals.length === 0 && <tr><td colSpan="6" className="text-center py-6 text-gray-500">No vitals found.</td></tr>}
             </tbody>
-          </table>}
+          </table>
+        }
       </Card>
     </div>
   );
@@ -1684,10 +2077,10 @@ const VitalsHistoryView = ({ currentUser }) => {
 const VitalsManagementView = ({ currentUser }) => {
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(false);
-
-  // Nurse records vitals for a patient. Since we don't have a patient selector yet,
-  // we'll just require the nurse to type the patient's ID.
+  
+  const [patients, setPatients] = useState([]);
   const [patientId, setPatientId] = useState("");
+  
   const [hr, setHr] = useState("");
   const [bpSys, setBpSys] = useState("");
   const [bpDia, setBpDia] = useState("");
@@ -1695,20 +2088,30 @@ const VitalsManagementView = ({ currentUser }) => {
   const [spo2, setSpo2] = useState("");
   const [notes, setNotes] = useState("");
 
+  useEffect(() => {
+    nursingService.getNursePatients().then(data => {
+      setPatients(data || []);
+      if (data && data.length > 0) {
+        setPatientId(data[0].patient_id);
+      }
+    }).catch(err => console.error(err));
+  }, []);
+
   const handleRecord = async () => {
     setLoading(true);
     setSaved(false);
     try {
       await api.post('/nursing/vitals', {
         patient_id: patientId,
-        heart_rate_bpm: parseInt(hr),
-        blood_pressure_systolic: parseInt(bpSys),
-        blood_pressure_diastolic: parseInt(bpDia),
-        temperature_celsius: parseFloat(temp),
-        spo2_percentage: parseInt(spo2),
+        heart_rate_bpm: parseInt(hr) || null,
+        blood_pressure_systolic: parseInt(bpSys) || null,
+        blood_pressure_diastolic: parseInt(bpDia) || null,
+        temperature_celsius: parseFloat(temp) || null,
+        spo2_percentage: parseInt(spo2) || null,
         clinical_notes: notes
       });
       setSaved(true);
+      setHr(""); setBpSys(""); setBpDia(""); setTemp(""); setSpo2(""); setNotes("");
     } catch (err) {
       console.error(err);
       alert("Error recording vitals. Did you request consent from the patient first?");
@@ -1722,8 +2125,13 @@ const VitalsManagementView = ({ currentUser }) => {
       <SectionHeader icon={HeartPulse} title="Vitals Management" desc="Record patient vital signs (requires vitals:write consent)" />
       <Card className="space-y-3">
         <div>
-          <label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>PATIENT ID</label>
-          <input className="mv-input mt-1" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000" value={patientId} onChange={e => setPatientId(e.target.value)} />
+          <label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>SELECT PATIENT</label>
+          <select className="mv-input mt-1" value={patientId} onChange={e => setPatientId(e.target.value)}>
+            <option value="">Select a patient...</option>
+            {patients.map(p => (
+              <option key={p.patient_id} value={p.patient_id}>{p.patient_id}</option>
+            ))}
+          </select>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>HR</label><input className="mv-input mt-1" placeholder="bpm" value={hr} onChange={e => setHr(e.target.value)} /></div>
@@ -1742,6 +2150,164 @@ const VitalsManagementView = ({ currentUser }) => {
   );
 };
 
+const DoctorCareTeamView = () => {
+  const [assignments, setAssignments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  
+  const [showAdd, setShowAdd] = useState(false);
+  const [patientId, setPatientId] = useState("");
+  const [nurseId, setNurseId] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const fetchAssignments = async () => {
+    try {
+      const data = await nursingService.getAssignments();
+      setAssignments(data || []);
+    } catch (err) {
+      console.error("Failed to fetch assignments", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAssignments();
+  }, []);
+
+  const handleAssign = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await nursingService.assignNurse({
+        patient_id: patientId,
+        nurse_id: nurseId,
+        resource_type: "ALL",
+        permission: "WRITE"
+      });
+      await fetchAssignments();
+      setShowAdd(false);
+      setPatientId("");
+      setNurseId("");
+    } catch (err) {
+      console.error(err);
+      alert(err?.response?.data?.detail || "Failed to assign nurse. Check if you have an active patient consent with delegation allowed.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRevoke = async (assignmentId) => {
+    try {
+      await nursingService.removeNurse(assignmentId);
+      await fetchAssignments();
+    } catch (err) {
+      alert("Failed to revoke assignment.");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <SectionHeader icon={Users} title="Care Team Management" desc="Assign nurses to your patients' care teams" />
+        <button className="mv-btn mv-btn-primary text-xs py-1.5 px-3" onClick={() => setShowAdd(!showAdd)}>
+          {showAdd ? "Cancel" : "+ Assign Nurse"}
+        </button>
+      </div>
+      
+      {showAdd && (
+        <Card className="mb-4">
+          <form onSubmit={handleAssign} className="space-y-3">
+            <h4 className="font-semibold text-sm">New Assignment (Full Clinical Access)</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div><label className="text-xs font-semibold text-gray-500">PATIENT ID</label><input className="mv-input mt-1" required value={patientId} onChange={e => setPatientId(e.target.value)} /></div>
+              <div><label className="text-xs font-semibold text-gray-500">NURSE ID</label><input className="mv-input mt-1" required value={nurseId} onChange={e => setNurseId(e.target.value)} /></div>
+            </div>
+            <button type="submit" className="mv-btn mv-btn-primary w-full mt-2" disabled={submitting}>
+              {submitting ? "Assigning..." : "Assign Nurse"}
+            </button>
+          </form>
+        </Card>
+      )}
+
+      <Card>
+        {loading ? <div className="p-4 text-center text-sm text-gray-500">Fetching assignments...</div> :
+          <table className="mv-table">
+            <thead><tr><th>Assignment ID</th><th>Patient ID</th><th>Nurse ID</th><th>Resource</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>
+              {assignments.map((a, i) => (
+                <tr key={i}>
+                  <td className="text-xs mv-font-mono" title={a.assignment_id}>{a.assignment_id.slice(0, 8)}...</td>
+                  <td className="text-xs mv-font-mono">{a.patient_id.slice(0, 8)}...</td>
+                  <td className="text-xs mv-font-mono">{a.nurse_id.slice(0, 8)}...</td>
+                  <td>{a.resource_type} ({a.permission})</td>
+                  <td><Pill_ tone={a.status === "ACTIVE" ? "green" : "red"}>{a.status}</Pill_></td>
+                  <td>
+                    {a.status === "ACTIVE" && (
+                      <button className="mv-btn mv-btn-danger text-xs py-1 px-2" onClick={() => handleRevoke(a.assignment_id)}>
+                        <X size={12} /> Revoke
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {assignments.length === 0 && <tr><td colSpan="6" className="text-center py-6 text-gray-500">No active assignments.</td></tr>}
+            </tbody>
+          </table>
+        }
+      </Card>
+    </div>
+  );
+};
+
+/* ---------------------------------------------------------------------- */
+/* LAB & BLOOD BANK VIEWS                                                 */
+/* ---------------------------------------------------------------------- */
+
+const LabOverview = () => (
+  <div className="space-y-4">
+    <SectionHeader icon={LayoutDashboard} title="Lab Technician Overview" desc="Dashboard for incoming lab requests" />
+    <Card>
+      <p className="text-sm text-gray-500">Welcome to the Lab Technician portal. Select 'Lab Requests' to view and process incoming requests.</p>
+    </Card>
+  </div>
+);
+
+const LabRequestsView = () => (
+  <div className="space-y-4">
+    <SectionHeader icon={FlaskConical} title="Lab Requests" desc="Manage patient test requests and upload reports" />
+    <Card>
+      <p className="text-sm text-gray-500">Lab test processing and encrypted file uploads will appear here.</p>
+    </Card>
+  </div>
+);
+
+const BloodBankOverview = () => (
+  <div className="space-y-4">
+    <SectionHeader icon={LayoutDashboard} title="Blood Bank Overview" desc="Manage hospital blood inventory" />
+    <Card>
+      <p className="text-sm text-gray-500">Welcome to the Blood Bank portal. View inventory and incoming requests.</p>
+    </Card>
+  </div>
+);
+
+const BloodInventoryView = () => (
+  <div className="space-y-4">
+    <SectionHeader icon={Droplet} title="Blood Inventory" desc="Current stock levels by blood group" />
+    <Card>
+      <p className="text-sm text-gray-500">Blood group inventory management will appear here.</p>
+    </Card>
+  </div>
+);
+
+const BloodRequestsView = () => (
+  <div className="space-y-4">
+    <SectionHeader icon={Activity} title="Blood Requests" desc="Incoming requests from doctors and emergency" />
+    <Card>
+      <p className="text-sm text-gray-500">Blood fulfillment tracking will appear here.</p>
+    </Card>
+  </div>
+);
+
 /* ---------------------------------------------------------------------- */
 /* VIEW REGISTRY                                                          */
 /* ---------------------------------------------------------------------- */
@@ -1751,11 +2317,14 @@ const VIEWS = {
     overview: PatientOverview, vault: VaultView, prescriptions: PrescriptionsView, medications: MedicationsView,
     allergies: AllergiesView, labs: LabsView, emergency: EmergencyInfoView, ai: AIAssistantView,
     vitals: VitalsHistoryView, "access-requests": AccessRequestsView, "active-consents": ActiveConsentsView, "access-history": AccessHistoryView, fraud: FraudAlertsView,
+    vaccinations: VaccinationsView,
   },
-  doctor: { overview: DoctorOverview, search: PatientSearchView, prescribe: CreatePrescriptionView, "clinical-ai": ClinicalAIView, history: PatientHistoryView },
-  nurse: { overview: NurseOverview, meds: MedAdminView, qr: QRVerifyView, schedule: ScheduleView, vitals: VitalsManagementView },
+  doctor: { overview: DoctorOverview, search: PatientSearchView, prescribe: CreatePrescriptionView, "clinical-ai": ClinicalAIView, history: PatientHistoryView, "care-team": DoctorCareTeamView },
+  nurse: { overview: NurseOverview, meds: MedAdminView, vitals: VitalsManagementView },
   pharmacist: { overview: PharmacyOverview, verify: VerifyView, dispense: DispenseView, interactions: InteractionsView },
-  insurance: { overview: InsuranceOverview, claims: ClaimsView, anomalies: AnomaliesView },
+  insurer: { overview: InsuranceOverview, claims: ClaimsView, anomalies: AnomaliesView },
+  lab: { overview: LabOverview, requests: LabRequestsView },
+  blood_bank: { overview: BloodBankOverview, inventory: BloodInventoryView, requests: BloodRequestsView },
   admin: { overview: AdminOverview, "ai-center": AICenterView, security: SecurityCenterView, audit: AuditView, analytics: AnalyticsView, users: UsersView },
 };
 

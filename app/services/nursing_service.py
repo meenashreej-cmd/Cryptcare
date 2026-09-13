@@ -56,8 +56,8 @@ def _to_response_dict(row: VitalSign) -> dict:
 
 
 def record_vitals(db: Session, current_user: CurrentUser, payload: VitalSignCreateRequest) -> dict:
-    if current_user.role != "NURSE":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only nurses can record vitals through this endpoint")
+    if current_user.role not in ("NURSE", "PATIENT"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only nurses and patients can record vitals through this endpoint")
 
     if not check_vault_access(db, current_user, payload.patient_id, "vitals", "write"):
         _write_access_log(db, current_user.id, None, AccessActionEnum.DENIED, patient_id=payload.patient_id)
@@ -102,3 +102,153 @@ def list_vitals(db: Session, current_user: CurrentUser, patient_id: str) -> list
     db.commit()
 
     return [_to_response_dict(row) for row in rows]
+
+
+from app.schemas.nursing import NurseAssignmentRequest
+from datetime import datetime
+
+def assign_nurse(db: Session, current_user: CurrentUser, payload: NurseAssignmentRequest) -> dict:
+    if current_user.role != "DOCTOR":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors can assign nurses to a care team")
+        
+    from app.models.user import User
+    nurse = db.query(User).filter(User.user_id == payload.nurse_id, User.role == "NURSE").first()
+    if not nurse:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Nurse not found")
+        
+    from app.models.consent import ConsentRequest, ConsentStatusEnum, ResourceTypeEnum
+    now = datetime.utcnow()
+    doctor_consent = (
+        db.query(ConsentRequest)
+        .filter(
+            ConsentRequest.patient_id == payload.patient_id,
+            ConsentRequest.grantee_id == current_user.id,
+            ConsentRequest.status == ConsentStatusEnum.ACTIVE,
+            ConsentRequest.allow_delegation == True
+        )
+        .all()
+    )
+    
+    from app.services.access_control import _PERMISSION_COVERS
+    
+    has_valid_consent = False
+    for d_row in doctor_consent:
+        if d_row.expires_at is None or d_row.expires_at < now:
+            continue
+        d_resource_matches = d_row.resource_type == ResourceTypeEnum.ALL or d_row.resource_type == payload.resource_type
+        if not d_resource_matches:
+            continue
+        if payload.permission.value.lower() not in _PERMISSION_COVERS.get(d_row.permission, set()):
+            continue
+        has_valid_consent = True
+        break
+        
+    if not has_valid_consent:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You do not have the required active consent with delegation enabled to assign this access")
+        
+    from app.models.nursing import CareTeamAssignment
+    assignment = CareTeamAssignment(
+        patient_id=payload.patient_id,
+        doctor_id=current_user.id,
+        nurse_id=payload.nurse_id,
+        resource_type=payload.resource_type,
+        permission=payload.permission,
+        status="ACTIVE"
+    )
+    db.add(assignment)
+    db.flush()
+    
+    _write_access_log(db, current_user.id, assignment.assignment_id, AccessActionEnum.CAREGIVER_GRANTED, patient_id=payload.patient_id)
+    db.commit()
+    db.refresh(assignment)
+    
+    return {
+        "assignment_id": assignment.assignment_id,
+        "patient_id": assignment.patient_id,
+        "doctor_id": assignment.doctor_id,
+        "nurse_id": assignment.nurse_id,
+        "resource_type": assignment.resource_type,
+        "permission": assignment.permission,
+        "status": assignment.status,
+        "created_at": assignment.created_at,
+        "removed_at": assignment.removed_at
+    }
+
+def remove_nurse(db: Session, current_user: CurrentUser, assignment_id: str) -> dict:
+    if current_user.role != "DOCTOR":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors can remove nurses from a care team")
+        
+    from app.models.nursing import CareTeamAssignment
+    assignment = db.query(CareTeamAssignment).filter(CareTeamAssignment.assignment_id == assignment_id).first()
+    if not assignment:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignment not found")
+        
+    if assignment.doctor_id != current_user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only remove assignments that you created")
+        
+    if assignment.status != "ACTIVE":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Assignment is already removed")
+        
+    assignment.status = "REMOVED"
+    assignment.removed_at = datetime.utcnow()
+    
+    _write_access_log(db, current_user.id, assignment.assignment_id, AccessActionEnum.CONSENT_REVOKED, patient_id=assignment.patient_id)
+    db.commit()
+    db.refresh(assignment)
+    
+    return {
+        "assignment_id": assignment.assignment_id,
+        "patient_id": assignment.patient_id,
+        "doctor_id": assignment.doctor_id,
+        "nurse_id": assignment.nurse_id,
+        "resource_type": assignment.resource_type,
+        "permission": assignment.permission,
+        "status": assignment.status,
+        "created_at": assignment.created_at,
+        "removed_at": assignment.removed_at
+    }
+
+def get_assignments(db: Session, current_user: CurrentUser) -> list[dict]:
+    if current_user.role != "DOCTOR":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors can view their assignments")
+        
+    from app.models.nursing import CareTeamAssignment
+    assignments = db.query(CareTeamAssignment).filter(CareTeamAssignment.doctor_id == current_user.id).order_by(CareTeamAssignment.created_at.desc()).all()
+    
+    return [
+        {
+            "assignment_id": a.assignment_id,
+            "patient_id": a.patient_id,
+            "doctor_id": a.doctor_id,
+            "nurse_id": a.nurse_id,
+            "resource_type": a.resource_type,
+            "permission": a.permission,
+            "status": a.status,
+            "created_at": a.created_at,
+            "removed_at": a.removed_at
+        }
+        for a in assignments
+    ]
+
+def get_nurse_patients(db: Session, current_user: CurrentUser) -> list[dict]:
+    if current_user.role != "NURSE":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only nurses can view their assigned patients")
+        
+    from app.models.nursing import CareTeamAssignment
+    assignments = db.query(CareTeamAssignment).filter(
+        CareTeamAssignment.nurse_id == current_user.id,
+        CareTeamAssignment.status == "ACTIVE"
+    ).all()
+    
+    # We will return the unique patient IDs and who assigned them
+    patients = {}
+    for a in assignments:
+        if a.patient_id not in patients:
+            patients[a.patient_id] = []
+        patients[a.patient_id].append({
+            "doctor_id": a.doctor_id,
+            "resource_type": a.resource_type,
+            "permission": a.permission
+        })
+        
+    return [{"patient_id": pid, "assignments": details} for pid, details in patients.items()]

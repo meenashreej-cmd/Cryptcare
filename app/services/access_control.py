@@ -104,6 +104,54 @@ def find_active_consent(
             continue
         return row
 
+    # If no direct consent is found, check if grantee is a nurse with an active delegation
+    from app.models.user import User
+    from app.models.nursing import CareTeamAssignment
+    grantee = db.query(User).filter(User.user_id == grantee_id).first()
+    if grantee and grantee.role == "NURSE":
+        assignments = (
+            db.query(CareTeamAssignment)
+            .filter(
+                CareTeamAssignment.patient_id == patient_id,
+                CareTeamAssignment.nurse_id == grantee_id,
+                CareTeamAssignment.status == "ACTIVE"
+            )
+            .all()
+        )
+        for assignment in assignments:
+            resource_matches = assignment.resource_type == ResourceTypeEnum.ALL or (
+                resource_enum is not None and assignment.resource_type == resource_enum
+            )
+            if not resource_matches:
+                continue
+            if mode not in _PERMISSION_COVERS.get(assignment.permission, set()):
+                continue
+            
+            # The assignment matches the request. Now check if the supervising doctor has active consent with allow_delegation.
+            doctor_consent = (
+                db.query(ConsentRequest)
+                .filter(
+                    ConsentRequest.patient_id == patient_id,
+                    ConsentRequest.grantee_id == assignment.doctor_id,
+                    ConsentRequest.status == ConsentStatusEnum.ACTIVE,
+                    ConsentRequest.allow_delegation == True
+                )
+                .all()
+            )
+            for d_row in doctor_consent:
+                if d_row.expires_at is None or d_row.expires_at < now:
+                    continue
+                d_resource_matches = d_row.resource_type == ResourceTypeEnum.ALL or (
+                    resource_enum is not None and d_row.resource_type == resource_enum
+                )
+                if not d_resource_matches:
+                    continue
+                if mode not in _PERMISSION_COVERS.get(d_row.permission, set()):
+                    continue
+                
+                # Found valid doctor consent that allows delegation!
+                return d_row
+
     return None
 
 

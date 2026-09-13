@@ -120,6 +120,7 @@ def request_consent(db: Session, current_user: CurrentUser, payload: ConsentRequ
         resource_type=payload.resource_type,
         permission=payload.permission,
         status=ConsentStatusEnum.PENDING,
+        allow_delegation=payload.allow_delegation,
     )
     db.add(row)
     db.flush()  # get consent_id before the audit log FK-adjacent insert
