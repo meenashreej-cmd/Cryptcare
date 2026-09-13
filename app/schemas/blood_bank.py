@@ -36,7 +36,7 @@ class BloodInventorySummaryResponse(BaseModel):
 
 
 class BloodRequestCreateRequest(BaseModel):
-    patient_id: str
+    patient_id: str | None = None
     blood_group: str = Field(..., pattern=r"^(A|B|AB|O)[+-]$")
     component: BloodComponentEnum
     units_needed: int = Field(..., gt=0, le=20)

@@ -38,9 +38,9 @@ def get_inventory_summary(
 def create_request(
     payload: BloodRequestCreateRequest,
     db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(require_role("DOCTOR", "NURSE")),
+    current_user: CurrentUser = Depends(require_role("DOCTOR", "NURSE", "PATIENT")),
 ):
-    """Requires an ACTIVE consent grant (resource_type=blood_requests) from the patient — same chokepoint as everything else."""
+    """Requires an ACTIVE consent grant (resource_type=blood_requests) if requested by DOCTOR/NURSE."""
     request = blood_bank_service.create_blood_request(db, current_user, payload)
     return BloodRequestResponse.model_validate(request)
 

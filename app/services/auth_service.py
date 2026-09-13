@@ -37,6 +37,7 @@ from app.models.user import (
     NurseProfile,
     PatientProfile,
     PharmacistProfile,
+    HospitalAdminProfile,
     RoleEnum,
     User,
     UserStatusEnum,
@@ -180,6 +181,13 @@ def register_user(db: Session, payload: RegisterRequest) -> tuple[User, str | No
             user_id=user.user_id,
             license_number=payload.license_number,
             facility_name=payload.organization_name,
+            verified=True,
+        ))
+        license_verified = True
+    elif payload.role == RoleEnum.HOSPITAL_ADMIN:
+        db.add(HospitalAdminProfile(
+            user_id=user.user_id,
+            hospital_name=payload.hospital_name or payload.organization_name,
             verified=True,
         ))
         license_verified = True

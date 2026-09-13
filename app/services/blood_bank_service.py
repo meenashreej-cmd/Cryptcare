@@ -147,16 +147,22 @@ def list_inventory_summary(db: Session, current_user: CurrentUser) -> list[Blood
 # --------------------------------------------------------------------------
 
 def create_blood_request(db: Session, current_user: CurrentUser, payload: BloodRequestCreateRequest) -> BloodRequest:
-    if current_user.role not in ("DOCTOR", "NURSE"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors and nurses can request blood for a patient")
+    if current_user.role not in ("DOCTOR", "NURSE", "PATIENT"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors, nurses, and patients can request blood")
 
-    if not check_vault_access(db, current_user, payload.patient_id, "blood_requests", "write"):
-        _write_access_log(db, current_user.id, None, AccessActionEnum.DENIED, patient_id=payload.patient_id)
+    patient_id = payload.patient_id
+    if current_user.role == "PATIENT":
+        patient_id = current_user.id
+    elif not patient_id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "patient_id is required for doctors/nurses")
+
+    if current_user.role != "PATIENT" and not check_vault_access(db, current_user, patient_id, "blood_requests", "write"):
+        _write_access_log(db, current_user.id, None, AccessActionEnum.DENIED, patient_id=patient_id)
         db.commit()
         raise HTTPException(status.HTTP_403_FORBIDDEN, "No active consent to request blood for this patient")
 
     request = BloodRequest(
-        patient_id=payload.patient_id,
+        patient_id=patient_id,
         requested_by=current_user.id,
         blood_group=payload.blood_group,
         component=payload.component,
@@ -165,7 +171,7 @@ def create_blood_request(db: Session, current_user: CurrentUser, payload: BloodR
     )
     db.add(request)
     db.flush()
-    _write_access_log(db, current_user.id, request.request_id, AccessActionEnum.WRITE, patient_id=payload.patient_id)
+    _write_access_log(db, current_user.id, request.request_id, AccessActionEnum.WRITE, patient_id=patient_id)
     db.commit()
     db.refresh(request)
     return request

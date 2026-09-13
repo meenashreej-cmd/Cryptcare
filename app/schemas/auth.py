@@ -41,6 +41,14 @@ class RegisterRequest(BaseModel):
         if role in (RoleEnum.DOCTOR, RoleEnum.NURSE, RoleEnum.LAB, RoleEnum.PHARMACIST, RoleEnum.INSURER, RoleEnum.BLOOD_BANK) and not v:
             raise ValueError(f"license_number is required for role {role}")
         return v
+        
+    @field_validator("hospital_name")
+    @classmethod
+    def hospital_name_required_for_hospital_admin(cls, v, info):
+        role = info.data.get("role")
+        if role == RoleEnum.HOSPITAL_ADMIN and not v:
+            raise ValueError("hospital_name is required for HOSPITAL_ADMIN")
+        return v
 
 
 class RegisterResponse(BaseModel):
