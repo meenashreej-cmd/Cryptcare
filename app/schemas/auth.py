@@ -1,9 +1,14 @@
 from datetime import date
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from app.models.user import RoleEnum, UserStatusEnum
+
+_PROFESSIONAL_ROLES = (
+    RoleEnum.DOCTOR, RoleEnum.NURSE, RoleEnum.LAB,
+    RoleEnum.PHARMACIST, RoleEnum.INSURER, RoleEnum.BLOOD_BANK,
+)
 
 
 class RegisterRequest(BaseModel):
@@ -34,6 +39,7 @@ class RegisterRequest(BaseModel):
             raise ValueError("Password must contain at least one uppercase letter")
         return v
 
+<<<<<<< Updated upstream
     @field_validator("license_number")
     @classmethod
     def license_required_for_professional_roles(cls, v, info):
@@ -49,6 +55,18 @@ class RegisterRequest(BaseModel):
         if role == RoleEnum.HOSPITAL_ADMIN and not v:
             raise ValueError("hospital_name is required for HOSPITAL_ADMIN")
         return v
+=======
+    @model_validator(mode="after")
+    def license_required_for_professional_roles(self) -> "RegisterRequest":
+        """
+        Uses model_validator (runs after all fields are parsed) so `role`
+        is always available — field_validator on license_number ran before
+        role was guaranteed to be in info.data, causing silent misses.
+        """
+        if self.role in _PROFESSIONAL_ROLES and not self.license_number:
+            raise ValueError(f"license_number is required for role {self.role}")
+        return self
+>>>>>>> Stashed changes
 
 
 class RegisterResponse(BaseModel):
