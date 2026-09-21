@@ -36,7 +36,7 @@ class User(Base):
     role: Mapped[RoleEnum] = mapped_column(Enum(RoleEnum), nullable=False)
     full_name: Mapped[str] = mapped_column(String(150), nullable=False)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    mfa_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)  # TOTP seed, encrypted at rest in prod
+    mfa_secret: Mapped[str | None] = mapped_column(String(255), nullable=True)  # TOTP seed, encrypted at rest in prod
     status: Mapped[UserStatusEnum] = mapped_column(Enum(UserStatusEnum), default=UserStatusEnum.PENDING_VERIFICATION)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

@@ -30,6 +30,7 @@ class NotificationTypeEnum(str, enum.Enum):
     PHARMACY_ACCESS = "PHARMACY_ACCESS"
     EMERGENCY_QR_ACCESS = "EMERGENCY_QR_ACCESS"
     BLOOD_REQUEST_UPDATE = "BLOOD_REQUEST_UPDATE"  # Phase 11 — blood request fulfilled/rejected
+    URGENT_BLOOD_SHORTAGE = "URGENT_BLOOD_SHORTAGE"
 
 
 class Notification(Base):

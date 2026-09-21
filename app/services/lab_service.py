@@ -73,9 +73,17 @@ def create_lab_test_request(db: Session, current_user: CurrentUser, payload: Lab
     if not check_vault_access(db, current_user, payload.patient_id, "lab_requests", "write"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "No active consent to request lab tests for this patient")
 
+    doctor_id = None
+    if current_user.role == "DOCTOR":
+        from app.models.user import DoctorProfile
+        doctor_profile = db.query(DoctorProfile).filter(DoctorProfile.user_id == current_user.id).first()
+        if not doctor_profile:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Doctor profile not found")
+        doctor_id = doctor_profile.doctor_id
+
     request = LabTestRequest(
         patient_id=payload.patient_id,
-        doctor_id=current_user.id if current_user.role == "DOCTOR" else None,
+        doctor_id=doctor_id,
         test_name=payload.test_name,
         status=LabRequestStatusEnum.REQUESTED,
     )
@@ -132,12 +140,12 @@ def _validate_upload(file: UploadFile, document_type: DocumentTypeEnum, raw_byte
             )
 
 
-def _store_encrypted_file(file: UploadFile, document_type: DocumentTypeEnum) -> tuple[str, int]:
+def _store_encrypted_file(file: UploadFile, document_type: DocumentTypeEnum, aad: str | None = None) -> tuple[str, int]:
     raw_bytes = file.file.read()
     _validate_upload(file, document_type, raw_bytes)
 
     # Encrypt file bytes at rest; store only the encrypted blob + a random filename.
-    encrypted_blob = encrypt(raw_bytes.decode("latin1"))  # simple reversible byte<->str mapping for the demo
+    encrypted_blob = encrypt(raw_bytes.decode("latin1"), aad=aad)  # simple reversible byte<->str mapping for the demo
     file_name = f"{uuid.uuid4()}.enc"
     file_path = os.path.join(_REPORT_STORAGE_DIR, file_name)
     with open(file_path, "w") as f:
@@ -170,21 +178,28 @@ def upload_report(
         if request.patient_id != _resolve_user_id_for_patient(db, request.patient_id):
              raise HTTPException(status.HTTP_403_FORBIDDEN, "Patients can only upload their own reports")
 
-    file_path, file_size = _store_encrypted_file(file, document_type)
-    summary_ct = encrypt(summary_text)
-    filename_ct = encrypt(file.filename or "") if file.filename else None
-
     report = LabReport(
         patient_id=request.patient_id,
         lab_test_request_id=request.request_id,
         document_type=document_type,
-        original_filename_encrypted=filename_ct,
-        file_size_bytes=file_size,
-        file_path_encrypted=file_path,  # path itself isn't PHI, but kept alongside encrypted content for the demo
-        report_summary_encrypted=summary_ct,
         uploaded_by=current_user.id,
     )
     db.add(report)
+    db.flush()
+
+    file_aad = f"cryptcare:v2|lab_reports|{report.report_id}|file_path_encrypted|{request.patient_id}"
+    file_path, file_size = _store_encrypted_file(file, document_type, aad=file_aad)
+    
+    summary_aad = f"cryptcare:v2|lab_reports|{report.report_id}|report_summary_encrypted|{request.patient_id}"
+    summary_ct = encrypt(summary_text, aad=summary_aad)
+    
+    filename_aad = f"cryptcare:v2|lab_reports|{report.report_id}|original_filename_encrypted|{request.patient_id}"
+    filename_ct = encrypt(file.filename or "", aad=filename_aad) if file.filename else None
+
+    report.original_filename_encrypted = filename_ct
+    report.file_size_bytes = file_size
+    report.file_path_encrypted = file_path
+    report.report_summary_encrypted = summary_ct
     request.status = LabRequestStatusEnum.COMPLETED
     _write_access_log(db, current_user.id, "lab_reports", None, AccessActionEnum.WRITE, patient_id=request.patient_id)
     db.commit()
@@ -220,7 +235,47 @@ def get_report(db: Session, current_user: CurrentUser, report_id: str) -> LabRep
     _write_access_log(db, current_user.id, "lab_reports", report_id, AccessActionEnum.READ, patient_id=report.patient_id)
     db.commit()
 
-    summary_decrypted = decrypt(report.report_summary_encrypted)
+    summary_aad = f"cryptcare:v2|lab_reports|{report.report_id}|report_summary_encrypted|{report.patient_id}"
+    summary_decrypted = decrypt(report.report_summary_encrypted, aad=summary_aad)
     db.expunge(report)
     report.report_summary_encrypted = summary_decrypted
     return report
+
+
+def get_lab_requests(
+    db: Session, 
+    current_user: CurrentUser, 
+    status_filter: LabRequestStatusEnum | None = None,
+    skip: int = 0,
+    limit: int = 50
+) -> list[dict]:
+    if current_user.role != "LAB":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only lab staff can view the queue")
+    
+    from app.models.consent import ConsentRequest, ConsentStatusEnum, ResourceTypeEnum
+    
+    active_consents = db.query(ConsentRequest.patient_id).filter(
+        ConsentRequest.grantee_id == current_user.id,
+        ConsentRequest.resource_type.in_([ResourceTypeEnum.LAB_REQUESTS, ResourceTypeEnum.ALL]),
+        ConsentRequest.status == ConsentStatusEnum.ACTIVE
+    ).subquery()
+    
+    query = db.query(LabTestRequest).filter(LabTestRequest.patient_id.in_(active_consents))
+    if status_filter:
+        query = query.filter(LabTestRequest.status == status_filter)
+        
+    requests = query.order_by(LabTestRequest.created_at.desc()).offset(skip).limit(limit).all()
+    
+    _write_access_log(db, current_user.id, "lab_test_requests_queue", None, AccessActionEnum.READ)
+    db.commit()
+    
+    return [
+        {
+            "request_id": r.request_id,
+            "patient_id": r.patient_id,
+            "test_name": r.test_name,
+            "status": r.status,
+            "created_at": r.created_at
+        }
+        for r in requests
+    ]

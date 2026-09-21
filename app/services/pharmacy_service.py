@@ -71,8 +71,17 @@ def _load_and_verify(db: Session, qr_payload: str, current_user: CurrentUser) ->
     if not prescription:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Prescription not found.")
 
-    diagnosis = decrypt(prescription.diagnosis_encrypted) if prescription.diagnosis_encrypted else ""
-    notes = decrypt(prescription.notes_encrypted) if prescription.notes_encrypted else ""
+    if prescription.diagnosis_encrypted:
+        diagnosis_aad = f"cryptcare:v2|prescriptions|{prescription.prescription_id}|diagnosis_encrypted|{prescription.patient_id}"
+        diagnosis = decrypt(prescription.diagnosis_encrypted, aad=diagnosis_aad)
+    else:
+        diagnosis = ""
+        
+    if prescription.notes_encrypted:
+        notes_aad = f"cryptcare:v2|prescriptions|{prescription.prescription_id}|notes_encrypted|{prescription.patient_id}"
+        notes = decrypt(prescription.notes_encrypted, aad=notes_aad)
+    else:
+        notes = ""
     items_list = [
         {
             "medicine_name": item.medicine_name,

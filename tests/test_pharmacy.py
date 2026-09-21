@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from datetime import datetime, timedelta
 from app.core.security import create_access_token
 from app.services.auth_service import ROLE_PERMISSIONS
@@ -195,35 +195,61 @@ def test_pharmacy_dispense_concurrency_smoke(client, db):
     in SQLite even if the row lock was removed. This test serves as a smoke test
     under load to ensure the endpoint does not crash and behaves as expected.
     """
-    patient_id, patient_user_id, doctor_user_id, pharmacist_user_id = setup_users(db)
-    doctor_headers = get_auth_header(doctor_user_id, RoleEnum.DOCTOR)
-    pharmacist_headers = get_auth_header(pharmacist_user_id, RoleEnum.PHARMACIST)
+    if db.bind.dialect.name == "sqlite":
+        pytest.skip("SQLite threading model does not support this concurrency test. Run with MariaDB.")
+        
+    from app.main import app
+    from app.db.session import get_db
+    from tests.conftest import TestingSessionLocal
+    
+    # Use a real thread-safe DB override for the entire test so data actually commits
+    def override_get_db_thread_safe():
+        session = TestingSessionLocal()
+        try:
+            yield session
+        finally:
+            session.close()
 
-    rx_payload = {
-        "patient_id": patient_id,
-        "diagnosis": "Concurrent test",
-        "notes": "N/A",
-        "items": [
-            {"medicine_name": "Aspirin", "dosage": "1 tablet", "frequency": "DAILY", "duration_days": 30}
-        ]
-    }
-    resp = client.post("/api/v1/vault/prescriptions", json=rx_payload, headers=doctor_headers)
-    assert resp.status_code == 201
-    prescription_id = resp.json()["prescription_id"]
+    app.dependency_overrides[get_db] = override_get_db_thread_safe
+    
+    # Create an independent session for setup that actually commits
+    setup_db = TestingSessionLocal()
+    try:
+        patient_id, patient_user_id, doctor_user_id, pharmacist_user_id = setup_users(setup_db)
+        doctor_headers = get_auth_header(doctor_user_id, RoleEnum.DOCTOR)
+        pharmacist_headers = get_auth_header(pharmacist_user_id, RoleEnum.PHARMACIST)
 
-    from app.models.vault import Prescription
-    rx = db.query(Prescription).filter(Prescription.prescription_id == prescription_id).first()
-    qr_payload_str = build_prescription_qr_payload(prescription_id, rx.digital_signature)
+        rx_payload = {
+            "patient_id": patient_id,
+            "diagnosis": "Concurrent test",
+            "notes": "N/A",
+            "items": [
+                {"medicine_name": "Aspirin", "dosage": "1 tablet", "frequency": "DAILY", "duration_days": 30}
+            ]
+        }
+        resp = client.post("/api/v1/vault/prescriptions", json=rx_payload, headers=doctor_headers)
+        assert resp.status_code == 201
+        prescription_id = resp.json()["prescription_id"]
 
-    def attempt_dispense():
-        return client.post(f"/api/v1/pharmacy/{prescription_id}/dispense", json={"qr_payload": qr_payload_str}, headers=pharmacist_headers)
+        from app.models.vault import Prescription
+        setup_db.commit()  # Reset REPEATABLE READ snapshot so we can see the inserted row
+        rx = setup_db.query(Prescription).filter(Prescription.prescription_id == prescription_id).first()
+        qr_payload_str = build_prescription_qr_payload(prescription_id, rx.digital_signature)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [executor.submit(attempt_dispense) for _ in range(3)]
-        results = [f.result() for f in concurrent.futures.as_completed(futures)]
+        def attempt_dispense():
+            return client.post(f"/api/v1/pharmacy/{prescription_id}/dispense", json={"qr_payload": qr_payload_str}, headers=pharmacist_headers)
+
+        # 5 parallel dispense attempts for the same prescription
+        num_threads = 5
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(attempt_dispense) for _ in range(num_threads)]
+            results = [f.result() for f in concurrent.futures.as_completed(futures)]
+            
+    finally:
+        setup_db.close()
+        app.dependency_overrides.clear()
 
     successes = [r for r in results if r.status_code == 200]
     conflicts = [r for r in results if r.status_code == 400]
-
     assert len(successes) == 1, "Exactly one dispense should succeed."
-    assert len(conflicts) == 2, "The concurrent attempts should fail safely."
+    assert len(conflicts) == 4, "The concurrent attempts should fail safely."

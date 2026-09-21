@@ -5,8 +5,22 @@ from app.core.rbac import CurrentUser, get_current_user
 from app.db.session import get_db
 from app.schemas.notification import NotificationListResponse, NotificationResponse
 from app.services import notification_service
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
+
+
+class UnreadCountResponse(BaseModel):
+    unread_count: int
+
+
+@router.get("/unread-count", response_model=UnreadCountResponse)
+def get_unread_count(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    count = notification_service.get_unread_count(db, current_user)
+    return UnreadCountResponse(unread_count=count)
 
 
 @router.get("", response_model=NotificationListResponse)

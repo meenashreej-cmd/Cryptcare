@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from datetime import datetime, timedelta
 from app.core.security import create_access_token
 from app.services.auth_service import ROLE_PERMISSIONS
@@ -80,7 +80,7 @@ def test_prescription_creation_and_qr(client, db):
     rx_data = resp.json()
     prescription_id = rx_data["prescription_id"]
     # Verify diagnosis field returned on creation is encrypted ciphertext blob
-    assert rx_data["diagnosis"].startswith("v1:")
+    assert rx_data["diagnosis"].startswith("v2:")
 
     # 2. Patient lists prescriptions (reads decrypted diagnosis)
     resp = client.get(f"/api/v1/vault/prescriptions?patient_id={patient_id}", headers=patient_headers)

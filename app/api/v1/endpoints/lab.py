@@ -4,10 +4,21 @@ from sqlalchemy.orm import Session
 from app.core.rbac import CurrentUser, get_current_user
 from app.db.session import get_db
 from app.models.vault import DocumentTypeEnum
-from app.schemas.lab import LabReportResponse, LabTestRequestCreate, LabTestRequestResponse
+from app.models.lab import LabRequestStatusEnum
+from app.schemas.lab import LabReportResponse, LabTestRequestCreate, LabTestRequestResponse, LabQueueItemResponse
 from app.services import lab_service
 
 router = APIRouter(prefix="/lab", tags=["Phase 3 — Laboratory"])
+
+@router.get("/requests", response_model=list[LabQueueItemResponse])
+def get_lab_requests(
+    status_filter: LabRequestStatusEnum | None = None,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    return lab_service.get_lab_requests(db, current_user, status_filter, skip, limit)
 
 
 @router.post("/requests", response_model=LabTestRequestResponse, status_code=201)

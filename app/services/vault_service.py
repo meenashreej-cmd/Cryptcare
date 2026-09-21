@@ -42,22 +42,27 @@ def create_prescription(db: Session, current_user: CurrentUser, payload: Prescri
             detail={"message": "Prescription blocked by clinical safety check", "safety": safety},
         )
 
-    diagnosis_ct = encrypt(payload.diagnosis)
-    notes_ct = encrypt(payload.notes or "")
-
-    canonical = canonical_prescription_content(payload.diagnosis, payload.notes or "", items_as_dicts)
-    # doctor_id here is the doctor's profile id — resolved by caller/endpoint via current_user
-    signature = sign_prescription(current_user.id, canonical)
+    from app.models.user import DoctorProfile
+    doctor_profile = db.query(DoctorProfile).filter_by(user_id=current_user.id).first()
+    if not doctor_profile:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Doctor profile not found")
 
     prescription = Prescription(
         patient_id=payload.patient_id,
-        doctor_id=current_user.id,  # NOTE: endpoint resolves this to doctor_profiles.doctor_id before calling
-        diagnosis_encrypted=diagnosis_ct,
-        notes_encrypted=notes_ct,
-        digital_signature=signature,
+        doctor_id=doctor_profile.doctor_id,
     )
     db.add(prescription)
     db.flush()
+
+    diagnosis_aad = f"cryptcare:v2|prescriptions|{prescription.prescription_id}|diagnosis_encrypted|{prescription.patient_id}"
+    notes_aad = f"cryptcare:v2|prescriptions|{prescription.prescription_id}|notes_encrypted|{prescription.patient_id}"
+
+    prescription.diagnosis_encrypted = encrypt(payload.diagnosis, diagnosis_aad)
+    prescription.notes_encrypted = encrypt(payload.notes or "", notes_aad)
+
+    canonical = canonical_prescription_content(payload.diagnosis, payload.notes or "", items_as_dicts)
+    signature = sign_prescription(current_user.id, canonical)
+    prescription.digital_signature = signature
 
     for item in payload.items:
         db.add(PrescriptionItem(
@@ -125,19 +130,58 @@ def get_prescriptions(db: Session, current_user: CurrentUser, patient_id: str) -
     _write_access_log(db, current_user.id, "prescriptions", patient_id, AccessActionEnum.READ, patient_id=patient_id)
     db.commit()
 
+    from app.core.signing import verify_prescription_signature, canonical_prescription_content
+
     # IMPORTANT: decrypt only AFTER commit, and only on rows detached (expunged)
     # from the session. Mutating a session-attached row's encrypted column and
     # then committing would flush the *decrypted* value back into the database,
     # permanently overwriting the ciphertext with plaintext. Expunging first
     # makes this mutation purely in-memory, for response building only.
+    valid_rows = []
     for row in rows:
         # Access relationship before expunging to load items
         _ = row.items
+        
+        items_as_dicts = [
+            {
+                "medicine_name": i.medicine_name,
+                "dosage": i.dosage,
+                "frequency": i.frequency,
+                "duration_days": i.duration_days,
+            }
+            for i in row.items
+        ]
+        
+        diagnosis_aad = f"cryptcare:v2|prescriptions|{row.prescription_id}|diagnosis_encrypted|{row.patient_id}"
+        notes_aad = f"cryptcare:v2|prescriptions|{row.prescription_id}|notes_encrypted|{row.patient_id}"
+        
         db.expunge(row)
-        row.diagnosis_encrypted = decrypt(row.diagnosis_encrypted)
-        row.notes_encrypted = decrypt(row.notes_encrypted)
+        row.diagnosis_encrypted = decrypt(row.diagnosis_encrypted, diagnosis_aad) if row.diagnosis_encrypted else ""
+        row.notes_encrypted = decrypt(row.notes_encrypted, notes_aad) if row.notes_encrypted else ""
+        
+        canonical = canonical_prescription_content(row.diagnosis_encrypted, row.notes_encrypted, items_as_dicts)
+        is_valid = verify_prescription_signature(row.doctor_id, canonical, row.digital_signature)
+        
+        if not is_valid:
+            # Re-attach temporarily to create audit logs
+            db.add(AccessLog(
+                user_id=current_user.id,
+                action=AccessActionEnum.DENIED,
+                resource_type="PRESCRIPTION",
+                resource_id=row.prescription_id,
+                patient_id=row.patient_id,
+                ip_address="127.0.0.1",
+            ))
+            db.commit()
+            fraud_service.detect_prescription_tampering(db, row.prescription_id, row.patient_id)
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail=f"Signature verification failed for prescription {row.prescription_id} — data may be tampered."
+            )
+            
+        valid_rows.append(row)
 
-    return rows
+    return valid_rows
 
 
 def add_allergy(db: Session, current_user: CurrentUser, patient_id: str, payload: AllergyCreateRequest) -> Allergy:

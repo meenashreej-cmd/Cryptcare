@@ -15,7 +15,19 @@ class LabTestRequestCreate(BaseModel):
 class LabTestRequestResponse(BaseModel):
     request_id: str
     patient_id: str
-    doctor_id: str
+    doctor_id: str | None
+    test_name: str
+    status: LabRequestStatusEnum
+    assigned_lab_user_id: str | None
+    requested_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class LabQueueItemResponse(BaseModel):
+    request_id: str
+    patient_id: str
     test_name: str
     status: LabRequestStatusEnum
     requested_at: datetime

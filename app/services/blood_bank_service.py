@@ -35,7 +35,7 @@ from app.models.blood_bank import (
     BloodUnitStatusEnum,
 )
 from app.models.notification import NotificationTypeEnum
-from app.models.user import BloodBankProfile, PatientProfile
+from app.models.user import BloodBankProfile, PatientProfile, User
 from app.schemas.blood_bank import (
     BloodInventorySummaryResponse,
     BloodRequestCreateRequest,
@@ -147,8 +147,8 @@ def list_inventory_summary(db: Session, current_user: CurrentUser) -> list[Blood
 # --------------------------------------------------------------------------
 
 def create_blood_request(db: Session, current_user: CurrentUser, payload: BloodRequestCreateRequest) -> BloodRequest:
-    if current_user.role not in ("DOCTOR", "NURSE", "PATIENT"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors, nurses, and patients can request blood")
+    if current_user.role not in ("DOCTOR", "PATIENT"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors and patients can request blood")
 
     patient_id = payload.patient_id
     if current_user.role == "PATIENT":
@@ -157,8 +157,12 @@ def create_blood_request(db: Session, current_user: CurrentUser, payload: BloodR
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "patient_id is required for doctors/nurses")
 
     if current_user.role != "PATIENT" and not check_vault_access(db, current_user, patient_id, "blood_requests", "write"):
-        _write_access_log(db, current_user.id, None, AccessActionEnum.DENIED, patient_id=patient_id)
-        db.commit()
+        from sqlalchemy.exc import IntegrityError
+        try:
+            _write_access_log(db, current_user.id, None, AccessActionEnum.DENIED, patient_id=patient_id)
+            db.commit()
+        except IntegrityError:
+            db.rollback()
         raise HTTPException(status.HTTP_403_FORBIDDEN, "No active consent to request blood for this patient")
 
     request = BloodRequest(
@@ -291,3 +295,72 @@ def _notify_patient(db: Session, request: BloodRequest, outcome: str) -> None:
         resource_type="blood_requests",
         resource_id=request.request_id,
     )
+
+
+def reject_and_broadcast_shortage(db: Session, current_user: CurrentUser, request_id: str) -> BloodRequest:
+    if current_user.role != "BLOOD_BANK":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only blood bank staff can reject blood requests")
+
+    # 1. Reject the request using compare-and-set (atomic row lock)
+    request = db.query(BloodRequest).filter(BloodRequest.request_id == request_id).first()
+    if not request:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Blood request not found")
+
+    updated_count = db.query(BloodRequest).filter(
+        BloodRequest.request_id == request_id,
+        BloodRequest.status == BloodRequestStatusEnum.PENDING
+    ).update({
+        "status": BloodRequestStatusEnum.REJECTED,
+        "fulfilled_by": current_user.id,
+        "rejection_reason": "Insufficient inventory",
+        "resolved_at": datetime.utcnow()
+    })
+    
+    if updated_count == 0:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Request is no longer PENDING or does not exist")
+        
+    db.refresh(request)
+    _write_access_log(db, current_user.id, request.request_id, AccessActionEnum.WRITE, patient_id=request.patient_id)
+    _notify_patient(db, request, "rejected")
+
+    # 2. Check cooldown globally for this blood group
+    from app.models.blood_bank import BroadcastCooldown
+    from datetime import timedelta
+    now = datetime.utcnow()
+    
+    cooldown = db.query(BroadcastCooldown).filter(BroadcastCooldown.blood_group == request.blood_group).with_for_update().first()
+    if cooldown and cooldown.last_broadcast_at > now - timedelta(minutes=15):
+        db.commit()
+        return request
+        
+    if cooldown:
+        cooldown.last_broadcast_at = now
+    else:
+        cooldown = BroadcastCooldown(blood_group=request.blood_group, last_broadcast_at=now)
+        db.add(cooldown)
+    
+    # 3. Broadcast URGENT_BLOOD_SHORTAGE to all patients, doctors, and nurses
+    users_to_notify = db.query(User).filter(User.role.in_(["PATIENT", "DOCTOR", "NURSE"])).all()
+    
+    # Message must NOT contain PHI, patient info, hospital, requester, or request_id
+    message = f"URGENT SHORTAGE: The Blood Bank urgently needs {request.blood_group} {request.component.value} donations."
+    
+    from app.models.notification import Notification, NotificationTypeEnum
+    notifications = []
+    for user in users_to_notify:
+        notifications.append(
+            Notification(
+                recipient_id=user.user_id,
+                type=NotificationTypeEnum.URGENT_BLOOD_SHORTAGE,
+                message=message,
+                resource_type=None,
+                resource_id=None,
+            )
+        )
+    
+    if notifications:
+        db.bulk_save_objects(notifications)
+    
+    db.commit()
+    return request
+

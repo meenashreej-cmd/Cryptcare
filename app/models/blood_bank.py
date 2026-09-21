@@ -91,3 +91,10 @@ class BloodRequest(Base):
     rejection_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class BroadcastCooldown(Base):
+    __tablename__ = "broadcast_cooldowns"
+    
+    blood_group: Mapped[str] = mapped_column(String(5), primary_key=True)
+    last_broadcast_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

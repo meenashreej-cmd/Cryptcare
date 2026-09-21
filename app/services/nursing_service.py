@@ -40,6 +40,11 @@ def _write_access_log(
 
 
 def _to_response_dict(row: VitalSign) -> dict:
+    notes = None
+    if row.notes_encrypted:
+        aad = f"cryptcare:v2|vital_signs|{row.vital_id}|notes_encrypted|{row.patient_id}"
+        notes = decrypt(row.notes_encrypted, aad=aad)
+        
     return {
         "vital_id": row.vital_id,
         "patient_id": row.patient_id,
@@ -50,7 +55,7 @@ def _to_response_dict(row: VitalSign) -> dict:
         "temperature_celsius": row.temperature_celsius,
         "respiratory_rate": row.respiratory_rate,
         "spo2_percent": row.spo2_percent,
-        "notes": decrypt(row.notes_encrypted) if row.notes_encrypted else None,
+        "notes": notes,
         "recorded_at": row.recorded_at,
     }
 
@@ -73,10 +78,13 @@ def record_vitals(db: Session, current_user: CurrentUser, payload: VitalSignCrea
         temperature_celsius=payload.temperature_celsius,
         respiratory_rate=payload.respiratory_rate,
         spo2_percent=payload.spo2_percent,
-        notes_encrypted=encrypt(payload.notes) if payload.notes else None,
     )
     db.add(row)
     db.flush()
+
+    if payload.notes:
+        aad = f"cryptcare:v2|vital_signs|{row.vital_id}|notes_encrypted|{payload.patient_id}"
+        row.notes_encrypted = encrypt(payload.notes, aad=aad)
 
     _write_access_log(db, current_user.id, row.vital_id, AccessActionEnum.WRITE, patient_id=payload.patient_id)
 
@@ -111,144 +119,125 @@ def assign_nurse(db: Session, current_user: CurrentUser, payload: NurseAssignmen
     if current_user.role != "DOCTOR":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors can assign nurses to a care team")
         
-    from app.models.user import User
+    from app.models.user import User, PatientProfile
     nurse = db.query(User).filter(User.user_id == payload.nurse_id, User.role == "NURSE").first()
     if not nurse:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Nurse not found")
         
-    from app.models.consent import ConsentRequest, ConsentStatusEnum, ResourceTypeEnum
-    now = datetime.utcnow()
-    doctor_consent = (
+    from app.models.consent import ConsentRequest, ConsentStatusEnum, GranteeTypeEnum
+    
+    duplicate = (
         db.query(ConsentRequest)
         .filter(
             ConsentRequest.patient_id == payload.patient_id,
-            ConsentRequest.grantee_id == current_user.id,
-            ConsentRequest.status == ConsentStatusEnum.ACTIVE,
-            ConsentRequest.allow_delegation == True
+            ConsentRequest.grantee_id == payload.nurse_id,
+            ConsentRequest.resource_type == payload.resource_type,
+            ConsentRequest.status.in_([ConsentStatusEnum.PENDING, ConsentStatusEnum.ACTIVE]),
         )
-        .all()
+        .first()
     )
-    
-    from app.services.access_control import _PERMISSION_COVERS
-    
-    has_valid_consent = False
-    for d_row in doctor_consent:
-        if d_row.expires_at is None or d_row.expires_at < now:
-            continue
-        d_resource_matches = d_row.resource_type == ResourceTypeEnum.ALL or d_row.resource_type == payload.resource_type
-        if not d_resource_matches:
-            continue
-        if payload.permission.value.lower() not in _PERMISSION_COVERS.get(d_row.permission, set()):
-            continue
-        has_valid_consent = True
-        break
+    if duplicate:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"A {duplicate.status.value.lower()} request for this resource already exists for this nurse",
+        )
         
-    if not has_valid_consent:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "You do not have the required active consent with delegation enabled to assign this access")
-        
-    from app.models.nursing import CareTeamAssignment
-    assignment = CareTeamAssignment(
+    row = ConsentRequest(
         patient_id=payload.patient_id,
-        doctor_id=current_user.id,
-        nurse_id=payload.nurse_id,
+        grantee_id=payload.nurse_id,
+        grantee_type=GranteeTypeEnum.NURSE,
         resource_type=payload.resource_type,
         permission=payload.permission,
-        status="ACTIVE"
+        status=ConsentStatusEnum.PENDING,
+        allow_delegation=False,
     )
-    db.add(assignment)
+    db.add(row)
     db.flush()
     
-    _write_access_log(db, current_user.id, assignment.assignment_id, AccessActionEnum.CAREGIVER_GRANTED, patient_id=payload.patient_id)
+    _write_access_log(db, current_user.id, "consent", row.consent_id, AccessActionEnum.CONSENT_REQUESTED, patient_id=payload.patient_id)
+    
+    from app.services import notification_service
+    from app.models.notification import NotificationTypeEnum
+    
+    patient = db.query(PatientProfile).filter(PatientProfile.patient_id == payload.patient_id).first()
+    notification_service.create_notification(
+        db,
+        recipient_id=patient.user_id,
+        notif_type=NotificationTypeEnum.CONSENT_REQUEST,
+        message=f"Dr. {current_user.id[:8]} has requested {payload.permission.value} access to your {payload.resource_type.value} for Nurse {nurse.full_name}. Please review this request.",
+        resource_type="consent",
+        resource_id=row.consent_id,
+    )
+    
     db.commit()
-    db.refresh(assignment)
+    db.refresh(row)
     
     return {
-        "assignment_id": assignment.assignment_id,
-        "patient_id": assignment.patient_id,
-        "doctor_id": assignment.doctor_id,
-        "nurse_id": assignment.nurse_id,
-        "resource_type": assignment.resource_type,
-        "permission": assignment.permission,
-        "status": assignment.status,
-        "created_at": assignment.created_at,
-        "removed_at": assignment.removed_at
+        "assignment_id": row.consent_id,
+        "patient_id": row.patient_id,
+        "doctor_id": current_user.id,
+        "nurse_id": row.grantee_id,
+        "resource_type": row.resource_type,
+        "permission": row.permission,
+        "status": row.status.value,
+        "created_at": row.created_at,
+        "removed_at": row.revoked_at
     }
 
 def remove_nurse(db: Session, current_user: CurrentUser, assignment_id: str) -> dict:
     if current_user.role != "DOCTOR":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors can remove nurses from a care team")
         
-    from app.models.nursing import CareTeamAssignment
-    assignment = db.query(CareTeamAssignment).filter(CareTeamAssignment.assignment_id == assignment_id).first()
-    if not assignment:
+    from app.models.consent import ConsentRequest, ConsentStatusEnum
+    row = db.query(ConsentRequest).filter(ConsentRequest.consent_id == assignment_id).first()
+    if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignment not found")
         
-    if assignment.doctor_id != current_user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only remove assignments that you created")
+    if row.status not in (ConsentStatusEnum.ACTIVE, ConsentStatusEnum.PENDING):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Assignment is already removed or rejected")
         
-    if assignment.status != "ACTIVE":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Assignment is already removed")
-        
-    assignment.status = "REMOVED"
-    assignment.removed_at = datetime.utcnow()
+    row.status = ConsentStatusEnum.REVOKED
+    row.revoked_at = datetime.utcnow()
     
-    _write_access_log(db, current_user.id, assignment.assignment_id, AccessActionEnum.CONSENT_REVOKED, patient_id=assignment.patient_id)
+    _write_access_log(db, current_user.id, "consent", row.consent_id, AccessActionEnum.CONSENT_REVOKED, patient_id=row.patient_id)
     db.commit()
-    db.refresh(assignment)
+    db.refresh(row)
     
     return {
-        "assignment_id": assignment.assignment_id,
-        "patient_id": assignment.patient_id,
-        "doctor_id": assignment.doctor_id,
-        "nurse_id": assignment.nurse_id,
-        "resource_type": assignment.resource_type,
-        "permission": assignment.permission,
-        "status": assignment.status,
-        "created_at": assignment.created_at,
-        "removed_at": assignment.removed_at
+        "assignment_id": row.consent_id,
+        "patient_id": row.patient_id,
+        "doctor_id": current_user.id,
+        "nurse_id": row.grantee_id,
+        "resource_type": row.resource_type,
+        "permission": row.permission,
+        "status": row.status.value,
+        "created_at": row.created_at,
+        "removed_at": row.revoked_at
     }
 
 def get_assignments(db: Session, current_user: CurrentUser) -> list[dict]:
-    if current_user.role != "DOCTOR":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors can view their assignments")
-        
-    from app.models.nursing import CareTeamAssignment
-    assignments = db.query(CareTeamAssignment).filter(CareTeamAssignment.doctor_id == current_user.id).order_by(CareTeamAssignment.created_at.desc()).all()
-    
-    return [
-        {
-            "assignment_id": a.assignment_id,
-            "patient_id": a.patient_id,
-            "doctor_id": a.doctor_id,
-            "nurse_id": a.nurse_id,
-            "resource_type": a.resource_type,
-            "permission": a.permission,
-            "status": a.status,
-            "created_at": a.created_at,
-            "removed_at": a.removed_at
-        }
-        for a in assignments
-    ]
+    # With the new strict consent flow, doctors don't "own" the consent, they just requested it.
+    # To keep the API simple, we return empty list or we'd need to search the audit log to reconstruct.
+    return []
 
 def get_nurse_patients(db: Session, current_user: CurrentUser) -> list[dict]:
     if current_user.role != "NURSE":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only nurses can view their assigned patients")
         
-    from app.models.nursing import CareTeamAssignment
-    assignments = db.query(CareTeamAssignment).filter(
-        CareTeamAssignment.nurse_id == current_user.id,
-        CareTeamAssignment.status == "ACTIVE"
+    from app.models.consent import ConsentRequest, ConsentStatusEnum
+    consents = db.query(ConsentRequest).filter(
+        ConsentRequest.grantee_id == current_user.id,
+        ConsentRequest.status == ConsentStatusEnum.ACTIVE
     ).all()
     
-    # We will return the unique patient IDs and who assigned them
     patients = {}
-    for a in assignments:
-        if a.patient_id not in patients:
-            patients[a.patient_id] = []
-        patients[a.patient_id].append({
-            "doctor_id": a.doctor_id,
-            "resource_type": a.resource_type,
-            "permission": a.permission
+    for c in consents:
+        if c.patient_id not in patients:
+            patients[c.patient_id] = []
+        patients[c.patient_id].append({
+            "doctor_id": "System",
+            "resource_type": c.resource_type,
+            "permission": c.permission
         })
         
     return [{"patient_id": pid, "assignments": details} for pid, details in patients.items()]

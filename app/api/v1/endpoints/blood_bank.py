@@ -38,9 +38,9 @@ def get_inventory_summary(
 def create_request(
     payload: BloodRequestCreateRequest,
     db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(require_role("DOCTOR", "NURSE", "PATIENT")),
+    current_user: CurrentUser = Depends(require_role("DOCTOR", "PATIENT")),
 ):
-    """Requires an ACTIVE consent grant (resource_type=blood_requests) if requested by DOCTOR/NURSE."""
+    """Requires an ACTIVE consent grant if requested by DOCTOR. Nurses disabled until strict-consent delegation."""
     request = blood_bank_service.create_blood_request(db, current_user, payload)
     return BloodRequestResponse.model_validate(request)
 
@@ -77,4 +77,15 @@ def reject_request(
     current_user: CurrentUser = Depends(require_role("BLOOD_BANK")),
 ):
     request = blood_bank_service.reject_request(db, current_user, request_id, payload.reason)
+    return BloodRequestResponse.model_validate(request)
+
+
+@router.post("/requests/{request_id}/reject-and-broadcast", response_model=BloodRequestResponse)
+def reject_and_broadcast_shortage(
+    request_id: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_role("BLOOD_BANK")),
+):
+    """Rejects request and broadcasts a shortage notification, enforcing cooldown."""
+    request = blood_bank_service.reject_and_broadcast_shortage(db, current_user, request_id)
     return BloodRequestResponse.model_validate(request)

@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     # writes use the new key. See tests/test_key_rotation.py.
     ENCRYPTION_KEY_V2: str | None = None
     ACTIVE_ENCRYPTION_KEY_VERSION: str = "v1"
+    ENFORCE_AAD_V2: bool = False
+
+    # Prescription Signing (Ed25519)
+    # Hex-encoded 32-byte raw private key for Ed25519. If empty, signing will fail in prod.
+    PRESCRIPTION_SIGNING_KEY_HEX: str = "0000000000000000000000000000000000000000000000000000000000000000"
+
 
     # OTP (registration/phone verification — Phase 1)
     OTP_EXPIRY_SECONDS: int = 300
@@ -70,6 +76,7 @@ class Settings(BaseSettings):
 
     # App
     ENV: str = "development"
+    CORS_ALLOWED_ORIGINS: str = "http://localhost:5173"
 
 
 settings = Settings()

@@ -58,28 +58,49 @@ def _get_key_by_version(version: str) -> bytes:
     return _KEY_REGISTRY[version]
 
 
-def encrypt(plaintext: str) -> str:
+def encrypt(plaintext: str, aad: str | None = None) -> str:
     """Encrypt a plaintext string, returning an opaque versioned blob."""
     if plaintext is None:
         return None
     version, key = _get_active_key()
     aesgcm = AESGCM(key)
     nonce = os.urandom(_NONCE_SIZE)
-    ciphertext = aesgcm.encrypt(nonce, plaintext.encode("utf-8"), associated_data=None)
-    return f"{version}:{base64.b64encode(nonce).decode()}:{base64.b64encode(ciphertext).decode()}"
+    
+    if aad is not None:
+        aad_bytes = aad.encode("utf-8")
+        ciphertext = aesgcm.encrypt(nonce, plaintext.encode("utf-8"), associated_data=aad_bytes)
+        return f"v2:{version}:{base64.b64encode(nonce).decode()}:{base64.b64encode(ciphertext).decode()}"
+    else:
+        ciphertext = aesgcm.encrypt(nonce, plaintext.encode("utf-8"), associated_data=None)
+        return f"{version}:{base64.b64encode(nonce).decode()}:{base64.b64encode(ciphertext).decode()}"
 
 
-def decrypt(blob: str) -> str:
+def decrypt(blob: str, aad: str | None = None) -> str:
     """Decrypt a versioned blob produced by encrypt(). Raises on tamper/corruption."""
     if blob is None:
         return None
+        
+    parts = blob.split(":")
+    is_v2 = blob.startswith("v2:") and len(parts) == 4
+    
+    if not is_v2 and getattr(settings, "ENFORCE_AAD_V2", False):
+        raise ValueError("Legacy decryption without AAD is disabled.")
+        
     try:
-        version, nonce_b64, ciphertext_b64 = blob.split(":", 2)
+        if is_v2:
+            if aad is None:
+                raise ValueError("aad is required for v2 ciphertexts")
+            _, version, nonce_b64, ciphertext_b64 = parts
+            associated_data = aad.encode("utf-8")
+        else:
+            version, nonce_b64, ciphertext_b64 = parts[0], parts[1], parts[2]
+            associated_data = None
+            
         key = _get_key_by_version(version)
         aesgcm = AESGCM(key)
         nonce = base64.b64decode(nonce_b64)
         ciphertext = base64.b64decode(ciphertext_b64)
-        plaintext = aesgcm.decrypt(nonce, ciphertext, associated_data=None)
+        plaintext = aesgcm.decrypt(nonce, ciphertext, associated_data=associated_data)
         return plaintext.decode("utf-8")
     except Exception as exc:
         # Never leak raw crypto internals to the caller/API response.

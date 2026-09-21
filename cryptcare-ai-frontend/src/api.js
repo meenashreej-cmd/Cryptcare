@@ -307,6 +307,10 @@ export const bloodBankService = {
     const res = await api.put(`/blood-bank/requests/${requestId}/reject`, { reason });
     return res.data;
   },
+  rejectAndBroadcastRequest: async (requestId, reason) => {
+    const res = await api.put(`/blood-bank/requests/${requestId}/reject-broadcast`, { reason });
+    return res.data;
+  },
 };
 
 // ── FRAUD ──────────────────────────────────────────────────────────────────
@@ -338,6 +342,10 @@ export const notificationService = {
   getAll: async (unreadOnly = false) => {
     const res = await api.get(`/notifications${unreadOnly ? '?unread_only=true' : ''}`);
     return res.data?.notifications || [];
+  },
+  getUnreadCount: async () => {
+    const res = await api.get('/notifications/unread-count');
+    return res.data?.unread_count || 0;
   },
   markRead: async (notificationId) => {
     const res = await api.put(`/notifications/${notificationId}/read`);

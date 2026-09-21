@@ -38,7 +38,7 @@ def parse_prescription_qr_payload(payload: str) -> tuple[str, str]:
     (Pharmacy) scan endpoint. Returns (prescription_id, digital_signature).
     Raises ValueError on a malformed payload rather than guessing.
     """
-    parts = payload.split(":")
+    parts = payload.split(":", 3)
     if len(parts) != 4 or parts[0] != "cryptcare" or parts[1] != "prescription":
         raise ValueError("Not a recognized CryptCare prescription QR payload")
     _, _, prescription_id, signature = parts

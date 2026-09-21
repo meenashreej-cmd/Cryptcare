@@ -40,15 +40,4 @@ class VitalSign(Base):
     recorded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class CareTeamAssignment(Base):
-    __tablename__ = "care_team_assignments"
 
-    assignment_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    patient_id: Mapped[str] = mapped_column(String(36), ForeignKey("patient_profiles.patient_id"), nullable=False)
-    doctor_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.user_id"), nullable=False)
-    nurse_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.user_id"), nullable=False)
-    resource_type: Mapped[ResourceTypeEnum] = mapped_column(Enum(ResourceTypeEnum), nullable=False)
-    permission: Mapped[PermissionEnum] = mapped_column(Enum(PermissionEnum), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    removed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

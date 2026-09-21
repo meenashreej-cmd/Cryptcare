@@ -140,6 +140,7 @@ const NAV = {
     { id: "access-history", label: "Access History", icon: History },
     { id: "fraud", label: "Fraud Alerts", icon: ShieldAlert },
     { id: "claims", label: "My Insurance Claims", icon: FileText },
+    { id: "blood", label: "Blood Requests", icon: Droplet },
   ],
   doctor: [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -148,6 +149,7 @@ const NAV = {
     { id: "clinical-ai", label: "AI Clinical Safety", icon: Sparkles },
     { id: "history", label: "Patient History", icon: History },
     { id: "care-team", label: "Care Team Management", icon: Users },
+    { id: "blood", label: "Blood Requests", icon: Droplet },
   ],
   nurse: [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -2737,6 +2739,114 @@ const PatientBloodRequestsView = ({ currentUser }) => {
   );
 };
 
+const DoctorBloodRequestsView = ({ currentUser }) => {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  
+  const [patientId, setPatientId] = useState("");
+  const [bloodGroup, setBloodGroup] = useState("O+");
+  const [component, setComponent] = useState("WHOLE_BLOOD");
+  const [units, setUnits] = useState(1);
+  const [urgency, setUrgency] = useState("ROUTINE");
+
+  const fetchRequests = async () => {
+    try {
+      const data = await bloodBankService.getRequests();
+      setRequests(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRequests();
+  }, [currentUser]);
+
+  const handleRequestSubmit = async (e) => {
+    e.preventDefault();
+    setActionLoading(true);
+    try {
+      await bloodBankService.createRequest({
+        patient_id: patientId,
+        blood_group: bloodGroup,
+        component: component,
+        units_needed: units,
+        urgency: urgency
+      });
+      setBloodGroup("O+");
+      setUnits(1);
+      setPatientId("");
+      await fetchRequests();
+    } catch (err) {
+      alert("Failed to create blood request.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <SectionHeader icon={Droplet} title="Blood Requests" desc="Request blood units for your patients" />
+      
+      <Card className="mb-4">
+        <h4 className="font-semibold text-sm mb-3">Submit New Request</h4>
+        <form onSubmit={handleRequestSubmit} className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <div>
+            <label className="text-xs font-semibold text-gray-500">PATIENT ID</label>
+            <input className="mv-input mt-1" required value={patientId} onChange={e => setPatientId(e.target.value)} placeholder="Patient ID" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500">BLOOD GROUP</label>
+            <select className="mv-input mt-1" value={bloodGroup} onChange={e => setBloodGroup(e.target.value)}>
+              {["O+", "O-", "A+", "A-", "B+", "B-", "AB+", "AB-"].map(g => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500">COMPONENT</label>
+            <select className="mv-input mt-1" value={component} onChange={e => setComponent(e.target.value)}>
+              <option value="WHOLE_BLOOD">Whole Blood</option>
+              <option value="PACKED_RBC">Packed RBCs</option>
+              <option value="PLASMA">Plasma</option>
+              <option value="PLATELETS">Platelets</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500">UNITS</label>
+            <input type="number" min="1" max="20" className="mv-input mt-1" required value={units} onChange={e => setUnits(parseInt(e.target.value))} />
+          </div>
+          <div className="flex items-end">
+            <button type="submit" className="mv-btn mv-btn-primary w-full h-10" disabled={actionLoading}>Submit Request</button>
+          </div>
+        </form>
+      </Card>
+
+      <Card>
+        {loading ? <div className="p-4 text-center text-sm text-gray-500">Loading requests...</div> :
+          <table className="mv-table">
+            <thead><tr><th>Req ID</th><th>Patient</th><th>Blood Group</th><th>Component</th><th>Units</th><th>Status</th></tr></thead>
+            <tbody>
+              {requests.map(r => (
+                <tr key={r.request_id}>
+                  <td className="text-xs mv-font-mono" title={r.request_id}>{r.request_id.slice(0, 8)}...</td>
+                  <td className="text-xs mv-font-mono">{r.patient_id.slice(0, 8)}...</td>
+                  <td className="font-semibold text-red-500">{r.blood_group}</td>
+                  <td>{r.component}</td>
+                  <td>{r.units_needed}</td>
+                  <td><Pill_ tone={r.status === "PENDING" ? "amber" : r.status === "FULFILLED" ? "green" : "red"}>{r.status}</Pill_></td>
+                </tr>
+              ))}
+              {requests.length === 0 && <tr><td colSpan="6" className="text-center py-6 text-gray-500">No requests found.</td></tr>}
+            </tbody>
+          </table>
+        }
+      </Card>
+    </div>
+  );
+};
+
 const BloodRequestsView = () => {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2771,12 +2881,16 @@ const BloodRequestsView = () => {
     }
   };
 
-  const handleRejectSubmit = async (e) => {
+  const handleRejectSubmit = async (e, broadcast = false) => {
     e.preventDefault();
     if (!rejectReason) return;
     setActionLoading(true);
     try {
-      await bloodBankService.rejectRequest(rejectingFor, rejectReason);
+      if (broadcast) {
+        await bloodBankService.rejectAndBroadcastRequest(rejectingFor, rejectReason);
+      } else {
+        await bloodBankService.rejectRequest(rejectingFor, rejectReason);
+      }
       setRejectingFor(null);
       setRejectReason("");
       await fetchRequests();
@@ -2797,12 +2911,15 @@ const BloodRequestsView = () => {
             <h4 className="font-semibold text-sm text-red-700">Reject Request</h4>
             <button className="text-xs text-gray-500 hover:text-gray-700" onClick={() => setRejectingFor(null)}>Cancel</button>
           </div>
-          <form onSubmit={handleRejectSubmit} className="space-y-3">
+          <form className="space-y-3">
             <div>
               <label className="text-xs font-semibold text-gray-500">REASON FOR REJECTION</label>
               <input className="mv-input mt-1 border-red-200 focus:border-red-500" required value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="e.g. Insufficient stock" />
             </div>
-            <button type="submit" className="mv-btn mv-btn-danger w-full mt-2" disabled={actionLoading}>Confirm Rejection</button>
+            <div className="flex flex-col sm:flex-row gap-2 mt-2">
+              <button type="button" onClick={(e) => handleRejectSubmit(e, false)} className="mv-btn mv-btn-danger flex-1" disabled={actionLoading}>Confirm Rejection</button>
+              <button type="button" onClick={(e) => handleRejectSubmit(e, true)} className="mv-btn flex-1" style={{ background: "rgba(229,72,77,0.9)", color: "#fff" }} disabled={actionLoading}>Reject & Broadcast Shortage</button>
+            </div>
           </form>
         </Card>
       )}
@@ -2924,7 +3041,7 @@ const VIEWS = {
     vitals: VitalsHistoryView, "access-requests": AccessRequestsView, "active-consents": ActiveConsentsView, "access-history": AccessHistoryView, fraud: FraudAlertsView,
     vaccinations: VaccinationsView, blood: PatientBloodRequestsView,
   },
-  doctor: { overview: DoctorOverview, search: PatientSearchView, prescribe: CreatePrescriptionView, "clinical-ai": ClinicalAIView, history: PatientHistoryView, "care-team": DoctorCareTeamView },
+  doctor: { overview: DoctorOverview, search: PatientSearchView, prescribe: CreatePrescriptionView, "clinical-ai": ClinicalAIView, history: PatientHistoryView, "care-team": DoctorCareTeamView, blood: DoctorBloodRequestsView },
   nurse: { overview: NurseOverview, meds: MedAdminView, vitals: VitalsManagementView },
   pharmacist: { overview: PharmacyOverview, verify: VerifyView, dispense: DispenseView, interactions: InteractionsView },
   insurer: { overview: InsuranceOverview, claims: ClaimsView, anomalies: AnomaliesView },
@@ -3432,17 +3549,21 @@ export default function CryptcareApp() {
   const [showRegister, setShowRegister] = useState(false);
   const [registeredSuccess, setRegisteredSuccess] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     const init = async () => {
       const token = localStorage.getItem('access_token');
       if (token) {
         try {
-          const me = await authService.getMe();
+          const me = await authService.getCurrentUser();
           setCurrentUser(me);
           
           const notifs = await notificationService.getAll();
           setNotifications(notifs || []);
+
+          const count = await notificationService.getUnreadCount();
+          setUnreadCount(count);
         } catch (e) {
           localStorage.removeItem('access_token');
         }
@@ -3451,6 +3572,17 @@ export default function CryptcareApp() {
     };
     init();
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const interval = setInterval(async () => {
+      try {
+        const count = await notificationService.getUnreadCount();
+        setUnreadCount(count);
+      } catch (e) {}
+    }, 15000); // Poll every 15s
+    return () => clearInterval(interval);
+  }, [currentUser]);
 
   if (loadingApp) return <div className="min-h-screen flex items-center justify-center">Loading Secure Vault...</div>;
   if (!currentUser) {
@@ -3565,11 +3697,17 @@ export default function CryptcareApp() {
               {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
             </button>
             <div className="relative">
-              <button className="w-9 h-9 rounded-xl flex items-center justify-center text-gray-500 hover:bg-black/5 dark:hover:bg-white/5 relative mv-focusable" onClick={() => setSidebarOpen(s => ({ ...s, notif: !s.notif }))}>
+              <button className="w-9 h-9 rounded-xl flex items-center justify-center text-gray-500 hover:bg-black/5 dark:hover:bg-white/5 relative mv-focusable" onClick={async () => {
+                setSidebarOpen(s => ({ ...s, notif: !s.notif }));
+                if (!sidebarOpen.notif) {
+                  const notifs = await notificationService.getAll();
+                  setNotifications(notifs || []);
+                }
+              }}>
                 <Bell size={18} />
-                {notifications.filter(n => !n.is_read).length > 0 && (
+                {unreadCount > 0 && (
                   <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full text-[9px] flex items-center justify-center font-bold text-white" style={{ background: "var(--red)" }}>
-                    {notifications.filter(n => !n.is_read).length}
+                    {unreadCount > 9 ? '9+' : unreadCount}
                   </span>
                 )}
               </button>
@@ -3580,6 +3718,7 @@ export default function CryptcareApp() {
                     <button className="text-xs text-blue-500" onClick={async () => {
                       await api.put('/notifications/mark-all-read');
                       setNotifications(n => n.map(x => ({ ...x, is_read: true })));
+                      setUnreadCount(0);
                     }}>Mark all read</button>
                   </div>
                   <div className="space-y-2 max-h-64 overflow-y-auto mv-scroll">

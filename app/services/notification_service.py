@@ -41,7 +41,15 @@ def create_notification(
         resource_id=resource_id,
     )
     db.add(notification)
+    # Lazy commit — caller usually commits the broader transaction.
     return notification
+
+
+def get_unread_count(db: Session, current_user: CurrentUser) -> int:
+    return db.query(Notification).filter(
+        Notification.recipient_id == current_user.id,
+        Notification.is_read == False
+    ).count()
 
 
 def list_notifications(db: Session, current_user: CurrentUser, unread_only: bool = False) -> list[Notification]:

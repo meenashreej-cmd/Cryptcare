@@ -1,4 +1,4 @@
-﻿"""
+"""
 Phase 5 hardening — real TOTP MFA.
 
 Covers: a DOCTOR account gets an MFA secret provisioned at registration,
@@ -9,7 +9,17 @@ immediate replay of the same code, and succeeds with a fresh valid code.
 import pyotp
 
 from app.services.auth_service import _OTP_STORE
+from app.data.license_registry import LICENSE_REGISTRY
+from app.models.user import RoleEnum
 
+_assigned_licenses = set()
+
+def _get_unique_doctor_license():
+    for lic in LICENSE_REGISTRY[RoleEnum.DOCTOR]:
+        if lic not in _assigned_licenses:
+            _assigned_licenses.add(lic)
+            return lic
+    raise Exception("Out of doctor licenses in registry for tests!")
 
 def _register_and_activate_doctor(client, email="drtotp@cryptcare.ai"):
     payload = {
@@ -18,7 +28,7 @@ def _register_and_activate_doctor(client, email="drtotp@cryptcare.ai"):
         "password": "Password123!",
         "full_name": "Dr. TOTP Test",
         "role": "DOCTOR",
-        "license_number": "LIC-TOTP-001",
+        "license_number": _get_unique_doctor_license(),
         "specialization": "Cardiology",
         "hospital_name": "Test General",
     }

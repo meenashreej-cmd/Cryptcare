@@ -1,4 +1,4 @@
-﻿from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from app.core.security import create_access_token, hash_password
 from app.models.consent import ConsentRequest, ConsentStatusEnum, GranteeTypeEnum, PermissionEnum, ResourceTypeEnum
@@ -235,3 +235,142 @@ def test_patient_cannot_access_other_patient_blood_requests(client, db):
 
     resp = client.get(f"/api/v1/blood-bank/requests?patient_id={ctx['patient_id']}", headers=stranger_headers)
     assert resp.status_code == 403
+
+
+def test_doctor_no_consent_and_nonexistent_patient_return_identical_403(client, db):
+    ctx = _setup(db)
+    stranger_doctor = _make_user(db, "bb_doc2@cryptcare.ai", "+9200000010", RoleEnum.DOCTOR, "Dr. No Consent")
+    db.add(DoctorProfile(user_id=stranger_doctor.user_id, license_number="DOC-BB-2"))
+    db.commit()
+    headers = get_auth_header(stranger_doctor.user_id, RoleEnum.DOCTOR)
+
+    # 1. Real patient, but no consent
+    resp1 = client.post(
+        "/api/v1/blood-bank/requests",
+        json={"patient_id": ctx["patient_id"], "blood_group": "A+", "component": "PACKED_RBC", "units_needed": 1},
+        headers=headers,
+    )
+    
+    # 2. Non-existent patient
+    resp2 = client.post(
+        "/api/v1/blood-bank/requests",
+        json={"patient_id": "00000000-0000-0000-0000-000000000000", "blood_group": "A+", "component": "PACKED_RBC", "units_needed": 1},
+        headers=headers,
+    )
+    
+    assert resp1.status_code == 403
+    assert resp2.status_code == 403
+    assert resp1.json() == resp2.json()
+
+
+def test_nurse_cannot_request_blood(client, db):
+    ctx = _setup(db)
+    nurse_user = _make_user(db, "bb_nurse@cryptcare.ai", "+9200000011", RoleEnum.NURSE, "Nurse Jackie")
+    db.commit()
+    headers = get_auth_header(nurse_user.user_id, RoleEnum.NURSE)
+
+    resp = client.post(
+        "/api/v1/blood-bank/requests",
+        json={"patient_id": ctx["patient_id"], "blood_group": "A+", "component": "PACKED_RBC", "units_needed": 1},
+        headers=headers,
+    )
+    assert resp.status_code == 403
+    assert "not permitted" in resp.json()["detail"]
+
+
+def test_reject_and_broadcast_shortage_no_phi_and_cooldown(client, db):
+    ctx = _setup(db)
+    resp = client.post(
+        "/api/v1/blood-bank/requests",
+        json={"patient_id": ctx["patient_id"], "blood_group": "O-", "component": "WHOLE_BLOOD", "units_needed": 10},
+        headers=ctx["doctor_headers"],
+    )
+    request_id = resp.json()["request_id"]
+
+    # Reject and broadcast URGENT SHORTAGE
+    resp = client.post(f"/api/v1/blood-bank/requests/{request_id}/reject-and-broadcast", headers=ctx["bb_headers"])
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "REJECTED"
+
+    # Check notification content for no PHI
+    notifs_resp = client.get("/api/v1/notifications", headers=ctx["patient_headers"])
+    assert notifs_resp.status_code == 200
+    notifs = notifs_resp.json()["notifications"]
+    
+    urgent_notif = next((n for n in notifs if n["type"] == "URGENT_BLOOD_SHORTAGE"), None)
+    assert urgent_notif is not None
+    assert "O- WHOLE_BLOOD" in urgent_notif["message"]
+    assert request_id not in urgent_notif["message"]
+    assert ctx["patient_id"] not in urgent_notif["message"]
+    assert urgent_notif["resource_id"] is None
+    assert urgent_notif["resource_type"] is None
+
+    # Test cooldown: another request for same group shouldn't spam URGENT_BLOOD_SHORTAGE
+    resp = client.post(
+        "/api/v1/blood-bank/requests",
+        json={"patient_id": ctx["patient_id"], "blood_group": "O-", "component": "WHOLE_BLOOD", "units_needed": 5},
+        headers=ctx["doctor_headers"],
+    )
+    request_id_2 = resp.json()["request_id"]
+    
+    resp = client.post(f"/api/v1/blood-bank/requests/{request_id_2}/reject-and-broadcast", headers=ctx["bb_headers"])
+    assert resp.status_code == 200
+    
+    notifs_resp2 = client.get("/api/v1/notifications", headers=ctx["patient_headers"])
+    urgent_notifs_count = sum(1 for n in notifs_resp2.json()["notifications"] if n["type"] == "URGENT_BLOOD_SHORTAGE")
+    assert urgent_notifs_count == 1  # Cooldown prevented second broadcast
+
+
+import threading
+import pytest
+
+def test_reject_and_broadcast_concurrency(client, db):
+    if db.bind.dialect.name == "sqlite":
+        pytest.skip("SQLite threading model does not support this concurrency test. Run with MariaDB.")
+        
+    from app.main import app
+    from app.db.session import get_db
+    from tests.conftest import TestingSessionLocal
+    
+    def override_get_db_thread_safe():
+        session = TestingSessionLocal()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = override_get_db_thread_safe
+    
+    try:
+        ctx = _setup(db)
+        
+        # VERY IMPORTANT: SQLite handles transactions implicitly, but MariaDB might not see
+        # the uncommitted data created by _setup(db) in the threads since the main thread 
+        # keeps the transaction open. We must commit here.
+        db.commit()
+
+        resp = client.post(
+            "/api/v1/blood-bank/requests",
+            json={"patient_id": ctx["patient_id"], "blood_group": "B-", "component": "PACKED_RBC", "units_needed": 2},
+            headers=ctx["doctor_headers"],
+        )
+        assert resp.status_code == 201
+        request_id = resp.json()["request_id"]
+
+        results = []
+        
+        def reject_req():
+            res = client.post(f"/api/v1/blood-bank/requests/{request_id}/reject-and-broadcast", headers=ctx["bb_headers"])
+            results.append(res.status_code)
+
+        threads = [threading.Thread(target=reject_req) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Only one should succeed (200), rest should be 409
+        assert results.count(200) == 1
+        assert results.count(409) == 4
+    finally:
+        app.dependency_overrides.clear()
