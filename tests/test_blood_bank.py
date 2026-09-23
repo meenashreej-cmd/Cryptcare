@@ -324,8 +324,8 @@ def test_reject_and_broadcast_shortage_no_phi_and_cooldown(client, db):
 import threading
 import pytest
 
-def test_reject_and_broadcast_concurrency(client, db):
-    if db.bind.dialect.name == "sqlite":
+def test_reject_and_broadcast_concurrency(client_transactional, db_transactional):
+    if db_transactional.bind.dialect.name == "sqlite":
         pytest.skip("SQLite threading model does not support this concurrency test. Run with MariaDB.")
         
     from app.main import app
@@ -342,14 +342,11 @@ def test_reject_and_broadcast_concurrency(client, db):
     app.dependency_overrides[get_db] = override_get_db_thread_safe
     
     try:
-        ctx = _setup(db)
+        ctx = _setup(db_transactional)
         
-        # VERY IMPORTANT: SQLite handles transactions implicitly, but MariaDB might not see
-        # the uncommitted data created by _setup(db) in the threads since the main thread 
-        # keeps the transaction open. We must commit here.
-        db.commit()
+        db_transactional.commit()
 
-        resp = client.post(
+        resp = client_transactional.post(
             "/api/v1/blood-bank/requests",
             json={"patient_id": ctx["patient_id"], "blood_group": "B-", "component": "PACKED_RBC", "units_needed": 2},
             headers=ctx["doctor_headers"],
@@ -360,14 +357,14 @@ def test_reject_and_broadcast_concurrency(client, db):
         results = []
         
         def reject_req():
-            res = client.post(f"/api/v1/blood-bank/requests/{request_id}/reject-and-broadcast", headers=ctx["bb_headers"])
+            res = client_transactional.post(f"/api/v1/blood-bank/requests/{request_id}/reject-and-broadcast", headers=ctx["bb_headers"])
             results.append(res.status_code)
 
         threads = [threading.Thread(target=reject_req) for _ in range(5)]
         for t in threads:
             t.start()
         for t in threads:
-            t.join()
+            t.join(timeout=10)
 
         # Only one should succeed (200), rest should be 409
         assert results.count(200) == 1

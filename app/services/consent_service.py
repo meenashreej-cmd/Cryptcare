@@ -245,9 +245,6 @@ def break_glass_access(db: Session, current_user: CurrentUser, payload: BreakGla
          accessed what and when — this happens in the SAME transaction as
          granting access, not as a best-effort follow-up.
     """
-    if current_user.role not in (GranteeTypeEnum.DOCTOR.value, GranteeTypeEnum.LAB.value):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors and labs can invoke break-glass access")
-
     patient = db.query(PatientProfile).filter(PatientProfile.patient_id == payload.patient_id).first()
     if not patient:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")

@@ -12,6 +12,7 @@ import string
 from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from typing import Any
 
 import pyotp
 from fastapi import HTTPException, status
@@ -23,6 +24,7 @@ from app.core.encryption import encrypt as encrypt_field
 from app.core.license_verification import verify_license_or_raise
 from app.core.security import (
     create_access_token,
+    create_preauth_token,
     create_refresh_token,
     hash_password,
     verify_password,
@@ -42,23 +44,118 @@ from app.models.user import (
     User,
     UserStatusEnum,
 )
+from app.models.auth import RefreshToken, UsedJTI, MfaState, ActionRateLimit, IpRateLimit
+from app.models.audit import AccessLog, AccessActionEnum
 from app.schemas.auth import RegisterRequest
 
 logger = logging.getLogger(__name__)
 
 
 
+import time
+
 # Production: move to Redis (or a DB table) with TTL support.
 _OTP_STORE: dict[str, dict] = {}
 
-# Tracks the last TOTP code accepted per user so the *same* 30s code can't be
-# replayed twice (e.g. an attacker who shoulder-surfs/intercepts one valid
-# code shouldn't get a second login out of it). 
-# PRODUCTION WARNING (Multi-pod limitation): This is currently an in-memory 
-# dict. In a horizontally scaled deployment, this MUST be moved to a shared 
-# cache (e.g., Redis). Otherwise, an attacker can replay a captured TOTP code 
-# against a different pod that hasn't seen the code yet, bypassing this protection.
-_LAST_ACCEPTED_TOTP: dict[str, str] = {}
+def _check_action_rate_limit(db: Session, target_id: str, action: str, limit: int, window_seconds: int, is_ip: bool = False) -> None:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff = now - timedelta(seconds=window_seconds)
+    
+    model = IpRateLimit if is_ip else ActionRateLimit
+    filter_col = model.ip_address if is_ip else model.user_id
+    
+    record = db.query(model).filter(filter_col == target_id, model.action == action).first()
+    
+    if not record:
+        kwargs = {"action": action, "last_attempt_at": now, "attempt_count": 1, "window_start": now}
+        if is_ip:
+            kwargs["ip_address"] = target_id
+        else:
+            kwargs["user_id"] = target_id
+        new_record = model(**kwargs)
+        db.add(new_record)
+        try:
+            db.commit()
+            return
+        except Exception:
+            db.rollback()
+
+    # If already exceeded AND window hasn't expired yet, reject
+    if record and record.attempt_count >= limit and record.window_start > cutoff:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many requests. Please try again later.")
+
+    # Try incrementing if window is valid
+    updated = db.query(model).filter(
+        filter_col == target_id,
+        model.action == action,
+        model.window_start > cutoff,
+        model.attempt_count < limit
+    ).update({
+        "attempt_count": model.attempt_count + 1,
+        "last_attempt_at": now
+    }, synchronize_session=False)
+
+    if updated == 0:
+        # Try to reset the window if it's expired.
+        reset = db.query(model).filter(
+            filter_col == target_id,
+            model.action == action,
+            model.window_start <= cutoff
+        ).update({
+            "attempt_count": 1,
+            "window_start": now,
+            "last_attempt_at": now
+        }, synchronize_session=False)
+        
+        if reset == 0:
+            db.commit()
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many requests. Please try again later.")
+            
+    db.commit()
+
+def _record_auth_event(db: Session, user_id: str | None, action: AccessActionEnum, resource_type: str, ip_address: str | None = None):
+    db.add(AccessLog(
+        user_id=user_id,
+        resource_type=resource_type,
+        action=action,
+        ip_address=ip_address
+    ))
+    db.commit()
+
+
+
+def _verify_totp_monotonic(db: Session, user_id: str, secret: str, otp_code: str) -> None:
+    totp = pyotp.TOTP(secret)
+    current_step = int(time.time() / 30)
+    
+    mfa_state = db.query(MfaState).filter(MfaState.user_id == user_id).first()
+    if not mfa_state:
+        mfa_state = MfaState(user_id=user_id, last_step=-1)
+        db.add(mfa_state)
+        db.commit()
+        db.refresh(mfa_state)
+        
+    last_step = mfa_state.last_step
+    window_start = max(last_step + 1, current_step - settings.MFA_TOTP_VALID_WINDOW)
+    window_end = current_step + settings.MFA_TOTP_VALID_WINDOW
+    
+    matched_step = None
+    for step in range(window_start, window_end + 1):
+        if hmac.compare_digest(totp.at(step * 30), otp_code):
+            matched_step = step
+            break
+            
+    if matched_step is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired MFA code")
+        
+    updated_rows = db.query(MfaState).filter(
+        MfaState.user_id == user_id,
+        MfaState.last_step < matched_step
+    ).update({"last_step": matched_step}, synchronize_session=False)
+    
+    if updated_rows == 0:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This MFA code has already been used")
+    db.commit()
 
 ROLE_PERMISSIONS: dict[RoleEnum, list[str]] = {
     RoleEnum.PATIENT: ["vault:read:own", "vault:write:own", "consent:approve", "sos:trigger"],
@@ -84,7 +181,8 @@ def _build_mfa_provisioning_uri(email: str, secret: str) -> str:
     return pyotp.TOTP(secret).provisioning_uri(name=email, issuer_name=settings.MFA_ISSUER_NAME)
 
 
-def register_user(db: Session, payload: RegisterRequest) -> tuple[User, str | None, bool]:
+def register_user(db: Session, payload: RegisterRequest, client_ip: str) -> tuple[User, str | None, bool]:
+    _check_action_rate_limit(db, client_ip, 'register', limit=3, window_seconds=60, is_ip=True)
     existing = db.query(User).filter(
         (User.email == payload.email) | (User.phone == payload.phone)
     ).first()
@@ -100,7 +198,16 @@ def register_user(db: Session, payload: RegisterRequest) -> tuple[User, str | No
     # ------------------------------------------------------------------ #
     verify_license_or_raise(payload.role, payload.license_number or "")
 
-    mfa_required = payload.role in (RoleEnum.DOCTOR, RoleEnum.NURSE, RoleEnum.PHARMACIST, RoleEnum.ADMIN)
+    if payload.role not in [
+        RoleEnum.PATIENT, RoleEnum.DOCTOR, RoleEnum.NURSE, RoleEnum.PHARMACIST, 
+        RoleEnum.LAB, RoleEnum.BLOOD_BANK, RoleEnum.INSURER, RoleEnum.HOSPITAL_ADMIN
+    ]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Role not permitted for self-registration"
+        )
+
+    mfa_required = payload.role.value in settings.MFA_REQUIRED_ROLES
 
     # Generated up front (not lazily on first login) so mfa_enabled is never
     # True without a matching secret already in place — see login()'s check.
@@ -115,7 +222,7 @@ def register_user(db: Session, payload: RegisterRequest) -> tuple[User, str | No
         role=payload.role,
         full_name=payload.full_name,
         status=UserStatusEnum.PENDING_VERIFICATION,
-        mfa_enabled=mfa_required,
+        mfa_enabled=False,  # Enrolled later via /enroll-mfa
         mfa_secret=encrypt_field(raw_mfa_secret) if raw_mfa_secret else None,
     )
     db.add(user)
@@ -188,9 +295,11 @@ def register_user(db: Session, payload: RegisterRequest) -> tuple[User, str | No
         db.add(HospitalAdminProfile(
             user_id=user.user_id,
             hospital_name=payload.hospital_name or payload.organization_name,
-            verified=True,
+            verified=False,
         ))
-        license_verified = True
+        license_verified = False
+    else:
+        raise ValueError(f"Unhandled role during registration: {payload.role}")
     # ADMIN accounts are provisioned out-of-band, not via public self-registration —
     # no profile row is created here and (below) no OTP is sent for this role.
 
@@ -340,7 +449,12 @@ def _dispatch_otp_email(to_email: str, full_name: str, otp: str) -> None:
         logger.error("Failed to send OTP email to %s: %s", to_email, exc)
 
 
-def verify_otp(db: Session, user_id: str, otp_code: str) -> User:
+def verify_otp(db: Session, user_id: str, jti: str, otp_code: str, client_ip: str) -> User:
+    _check_action_rate_limit(db, user_id, "verify_otp", limit=5, window_seconds=60, is_ip=False)
+    _check_action_rate_limit(db, client_ip, "verify_otp", limit=20, window_seconds=60, is_ip=True)
+    if db.query(UsedJTI).filter(UsedJTI.jti == jti).first():
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token already used")
+
     record = _OTP_STORE.get(user_id)
     if not record:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No OTP pending for this user")
@@ -359,7 +473,27 @@ def verify_otp(db: Session, user_id: str, otp_code: str) -> User:
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
 
-    user.status = UserStatusEnum.ACTIVE
+    if user.role == RoleEnum.PATIENT:
+        user.status = UserStatusEnum.ACTIVE
+    else:
+        # For professional roles, check if the mock registry already verified them
+        profile = (
+            db.query(DoctorProfile).filter(DoctorProfile.user_id == user.user_id).first()
+            or db.query(NurseProfile).filter(NurseProfile.user_id == user.user_id).first()
+            or db.query(LabProfile).filter(LabProfile.user_id == user.user_id).first()
+            or db.query(PharmacistProfile).filter(PharmacistProfile.user_id == user.user_id).first()
+            or db.query(InsurerProfile).filter(InsurerProfile.user_id == user.user_id).first()
+            or db.query(BloodBankProfile).filter(BloodBankProfile.user_id == user.user_id).first()
+            or db.query(HospitalAdminProfile).filter(HospitalAdminProfile.user_id == user.user_id).first()
+        )
+            
+        if profile and getattr(profile, 'verified', False):
+            user.status = UserStatusEnum.ACTIVE
+        else:
+            # Stays PENDING_VERIFICATION (e.g. HOSPITAL_ADMIN)
+            pass
+
+    db.add(UsedJTI(jti=jti))
     db.commit()
     db.refresh(user)
     del _OTP_STORE[user_id]
@@ -378,6 +512,7 @@ def admin_verify_license(db: Session, target_user_id: str, approve: bool) -> Use
         or db.query(PharmacistProfile).filter(PharmacistProfile.user_id == user.user_id).first()
         or db.query(InsurerProfile).filter(InsurerProfile.user_id == user.user_id).first()
         or db.query(BloodBankProfile).filter(BloodBankProfile.user_id == user.user_id).first()
+        or db.query(HospitalAdminProfile).filter(HospitalAdminProfile.user_id == user.user_id).first()
     )
     if profile is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "User has no professional profile requiring verification")
@@ -405,18 +540,70 @@ def _dummy_password_hash() -> str:
     return _dummy_password_hash_cache[0]
 
 
-def login(db: Session, email: str, password: str, otp_code: str | None) -> tuple[str, str]:
+def login(db: Session, email: str, password: str, otp_code: str | None, client_ip: str) -> dict[str, Any]:
+    # 1. IP-level rate limit
+    _check_action_rate_limit(
+        db, client_ip, 'login', 
+        limit=settings.RATE_LIMIT_LOGIN_MAX, 
+        window_seconds=settings.RATE_LIMIT_LOGIN_WINDOW_SECONDS, 
+        is_ip=True
+    )
     user = db.query(User).filter(User.email == email).first()
 
-    # Always run verify_password, even when no user was found, so a
-    # nonexistent email doesn't return measurably faster than a wrong
-    # password does (bcrypt dominates response time either way).
-    password_ok = verify_password(password, user.password_hash if user else _dummy_password_hash())
-    if not user or not password_ok:
+    # 2. Account-level lockout check before verifying password
+    if user and user.locked_until and user.locked_until > datetime.now(timezone.utc).replace(tzinfo=None):
+        # We don't want to leak that the account is locked vs wrong password easily, but HTTP 401 is appropriate
+        # Actually, let's return identical 401 to prevent enumeration. Wait, no, returning identical 401 doesn't tell the user they are locked out.
+        # But wait! To prevent account enumeration, "login returns identical responses for 'no such user' vs 'wrong password'". 
+        # A locked account is a valid user, so returning "Account locked" leaks that the user exists. 
+        # BUT a real user needs to know they are locked out! Let's return "Invalid email or password" but internally log it. 
+        # Actually, if we return 401 "Invalid email or password" for locked accounts, they won't know when they can login. Let's return 401. 
+        # Let's run a dummy verify_password just for timing.
+        verify_password("dummy", _dummy_password_hash())
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
 
+    password_ok = verify_password(password, user.password_hash if user else _dummy_password_hash())
+    
+    if not user or not password_ok:
+        if user:
+            # Increment failed attempt count and maybe lock out
+            try:
+                _check_action_rate_limit(db, user.user_id, 'login_failed', limit=5, window_seconds=60, is_ip=False)
+            except HTTPException as e:
+                if e.status_code == 429:
+                    user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=15)
+                    _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_SUSPICIOUS, f"auth_lockout:attempts={5}", client_ip)
+                    # Return 401 instead of 429 to prevent enumeration
+                    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
+            _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_FAILED, "auth_login_failed", client_ip)
+        else:
+            _record_auth_event(db, None, AccessActionEnum.AUTH_FAILED, f"auth_login_failed:email={email}", client_ip)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
+
+    if user.status == UserStatusEnum.PENDING_VERIFICATION:
+        permissions = ROLE_PERMISSIONS.get(user.role, [])
+        preauth_token = create_preauth_token(user.user_id, user.role.value, permissions, purpose="otp_verification")
+        return {"preauth_token": preauth_token, "requires_otp": True}
+        
     if user.status != UserStatusEnum.ACTIVE:
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"Account is {user.status.value.lower()}, cannot log in")
+
+    if user.must_change_password:
+        permissions = ROLE_PERMISSIONS.get(user.role, [])
+        return {
+            "requires_password_change": True, 
+            "user_id": user.user_id, 
+            "preauth_token": create_preauth_token(user.user_id, user.role.value, permissions, purpose="password_change")
+        }
+
+    requires_mfa = user.role.value in settings.MFA_REQUIRED_ROLES
+
+    if requires_mfa and not user.mfa_enabled:
+        permissions = ROLE_PERMISSIONS.get(user.role, [])
+        return {
+            "requires_mfa_enrollment": True,
+            "preauth_token": create_preauth_token(user.user_id, user.role.value, permissions, purpose="mfa_enrollment")
+        }
 
     if user.mfa_enabled:
         if not otp_code:
@@ -430,31 +617,170 @@ def login(db: Session, email: str, password: str, otp_code: str | None) -> tuple
                 "MFA is enabled for this account but no authenticator is enrolled — contact support",
             )
 
-        totp = pyotp.TOTP(decrypt_field(user.mfa_secret))
-        if not totp.verify(otp_code, valid_window=settings.MFA_TOTP_VALID_WINDOW):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid MFA code")
-
-        # A valid code is only usable once — reject an immediate replay of
-        # the same code even though it's still inside its 30s validity window.
-        if _LAST_ACCEPTED_TOTP.get(user.user_id) == otp_code:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This MFA code has already been used")
-        _LAST_ACCEPTED_TOTP[user.user_id] = otp_code
+        _verify_totp_monotonic(db, user.user_id, decrypt_field(user.mfa_secret), otp_code)
 
     permissions = ROLE_PERMISSIONS.get(user.role, [])
     access_token = create_access_token(user.user_id, user.role.value, permissions)
     refresh_token = create_refresh_token(user.user_id, user.role.value, permissions)
-    return access_token, refresh_token
+    
+    rt_payload = verify_refresh_token(refresh_token)
+    db.add(RefreshToken(
+        jti=rt_payload["jti"],
+        user_id=user.user_id,
+        expires_at=datetime.fromtimestamp(rt_payload["exp"], timezone.utc).replace(tzinfo=None)
+    ))
+    _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_LOGIN, "auth_login_success", client_ip)
+
+    return {"access_token": access_token, "refresh_token": refresh_token}
 
 
-def refresh_access_token(db: Session, refresh_token: str) -> str:
+def refresh_access_token(db: Session, refresh_token: str, client_ip: str) -> dict[str, str]:
     try:
         payload = verify_refresh_token(refresh_token)
     except TokenError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired refresh token")
 
+    # Additive protection: 10 refreshes per minute ceiling per account
+    _check_action_rate_limit(db, payload["sub"], 'refresh', limit=10, window_seconds=60, is_ip=False)
+
+    rt_record = db.query(RefreshToken).filter(RefreshToken.jti == payload["jti"]).first()
+    if not rt_record:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token not found in registry")
+        
+    if rt_record.revoked:
+        # Reuse Detected! Revoke all tokens for this user.
+        db.query(RefreshToken).filter(
+            RefreshToken.user_id == rt_record.user_id,
+            RefreshToken.revoked == False
+        ).update({"revoked": True})
+        _record_auth_event(db, payload["sub"], AccessActionEnum.AUTH_SUSPICIOUS, "auth_token_reuse_detected", client_ip)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token reuse detected — session terminated")
+
     user = db.query(User).filter(User.user_id == payload["sub"]).first()
     if not user or user.status != UserStatusEnum.ACTIVE:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User no longer active")
 
+    # Issue new tokens
     permissions = ROLE_PERMISSIONS.get(user.role, [])
-    return create_access_token(user.user_id, user.role.value, permissions)
+    new_access_token = create_access_token(user.user_id, user.role.value, permissions)
+    new_refresh_token = create_refresh_token(user.user_id, user.role.value, permissions)
+    
+    new_rt_payload = verify_refresh_token(new_refresh_token)
+    
+    # Use compare-and-set atomic update to prevent concurrent refreshes
+    updated_rows = db.query(RefreshToken).filter(
+        RefreshToken.jti == payload["jti"],
+        RefreshToken.revoked == False
+    ).update({
+        "revoked": True, 
+        "replaced_by_jti": new_rt_payload["jti"]
+    }, synchronize_session=False)
+    
+    if updated_rows == 0:
+        # Another request already consumed this token concurrently.
+        # Treat as reuse and revoke the family.
+        db.query(RefreshToken).filter(
+            RefreshToken.user_id == rt_record.user_id,
+            RefreshToken.revoked == False
+        ).update({"revoked": True}, synchronize_session=False)
+        _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_SUSPICIOUS, "auth_token_concurrent_reuse_detected", client_ip)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token reuse detected — session terminated")
+    
+    
+    db.add(RefreshToken(
+        jti=new_rt_payload["jti"],
+        user_id=user.user_id,
+        expires_at=datetime.fromtimestamp(new_rt_payload["exp"], timezone.utc).replace(tzinfo=None)
+    ))
+    db.commit()
+
+    return {"access_token": new_access_token, "refresh_token": new_refresh_token}
+
+def logout(db: Session, refresh_token: str) -> None:
+    try:
+        payload = verify_refresh_token(refresh_token)
+    except TokenError:
+        return  # If token is invalid or expired, nothing to revoke
+        
+    _check_action_rate_limit(db, payload["sub"], "logout", limit=20, window_seconds=60, is_ip=False)
+    
+    db.query(RefreshToken).filter(RefreshToken.jti == payload["jti"]).update({"revoked": True})
+    _record_auth_event(db, payload["sub"], AccessActionEnum.AUTH_LOGOUT, "auth_logout")
+
+
+def logout_all(db: Session, user_id: str) -> None:
+    _check_action_rate_limit(db, user_id, "logout", limit=20, window_seconds=60, is_ip=False)
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == user_id,
+        RefreshToken.revoked == False
+    ).update({"revoked": True})
+    _record_auth_event(db, user_id, AccessActionEnum.AUTH_LOGOUT, "auth_logout_all")
+
+
+def change_password(db: Session, user_id: str, jti: str | None, new_password: str, client_ip: str) -> None:
+    _check_action_rate_limit(db, user_id, "change_password", limit=5, window_seconds=60, is_ip=False)
+    _check_action_rate_limit(db, client_ip, "change_password", limit=20, window_seconds=60, is_ip=True)
+    
+    if jti and db.query(UsedJTI).filter(UsedJTI.jti == jti).first():
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token already used")
+
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+        
+    user.password_hash = hash_password(new_password)
+    user.must_change_password = False
+    if jti:
+        db.add(UsedJTI(jti=jti))
+    _record_auth_event(db, user_id, AccessActionEnum.AUTH_PASSWORD_CHANGED, "auth_password_changed", client_ip)
+    logout_all(db, user_id)
+
+
+def enroll_mfa(db: Session, user_id: str, jti: str, otp_code: str, client_ip: str) -> dict[str, str]:
+    if db.query(UsedJTI).filter(UsedJTI.jti == jti).first():
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token already used")
+
+    _check_action_rate_limit(db, user_id, "enroll_mfa", limit=3, window_seconds=60, is_ip=False)
+    _check_action_rate_limit(db, client_ip, "enroll_mfa", limit=10, window_seconds=60, is_ip=True)
+
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+        
+    if user.mfa_enabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "MFA is already enrolled")
+        
+    if not user.mfa_secret:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "No MFA secret provisioned to enroll")
+
+    _verify_totp_monotonic(db, user.user_id, decrypt_field(user.mfa_secret), otp_code)
+    
+    user.mfa_enabled = True
+    db.add(UsedJTI(jti=jti))
+    _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_MFA_ENROLLED, "auth_mfa_enrolled", client_ip)
+    
+    permissions = ROLE_PERMISSIONS.get(user.role, [])
+    access_token = create_access_token(user.user_id, user.role.value, permissions)
+    refresh_token = create_refresh_token(user.user_id, user.role.value, permissions)
+    
+    rt_payload = verify_refresh_token(refresh_token)
+    db.add(RefreshToken(
+        jti=rt_payload["jti"],
+        user_id=user.user_id,
+        expires_at=datetime.fromtimestamp(rt_payload["exp"], timezone.utc).replace(tzinfo=None)
+    ))
+    db.commit()
+
+    return {"access_token": access_token, "refresh_token": refresh_token}
+
+
+def resend_otp(db: Session, user_id: str, client_ip: str) -> None:
+    _check_action_rate_limit(db, user_id, "resend_otp", limit=1, window_seconds=60, is_ip=False)
+    _check_action_rate_limit(db, client_ip, "resend_otp", limit=5, window_seconds=60, is_ip=True)
+        
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user or user.status != UserStatusEnum.PENDING_VERIFICATION:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "User is not in pending verification state")
+        
+    _send_otp(user)
+

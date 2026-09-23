@@ -12,7 +12,24 @@ class FraudAlertResponse(BaseModel):
     category: FraudAlertCategoryEnum
     severity: SeverityEnum
     status: FraudAlertStatusEnum
-    description: str
+    counts: int
+    related_entity_type: str | None
+    encrypted_context: str | None
+    related_resource_ids: list[str]
+    detected_at: datetime
+    reviewed_by: str | None
+    reviewed_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class FraudAlertAdminResponse(BaseModel):
+    alert_id: str
+    category: FraudAlertCategoryEnum
+    severity: SeverityEnum
+    status: FraudAlertStatusEnum
+    counts: int
+    related_entity_type: str | None
     related_resource_ids: list[str]
     detected_at: datetime
     reviewed_by: str | None
@@ -22,7 +39,14 @@ class FraudAlertResponse(BaseModel):
 
 
 class FraudAlertListResponse(BaseModel):
-    alerts: list[FraudAlertResponse]
+    alerts: list[FraudAlertResponse] | list[FraudAlertAdminResponse]
+
+
+class FraudAlertAdminListResponse(BaseModel):
+    alerts: list[FraudAlertAdminResponse]
+    total: int
+    skip: int
+    limit: int
 
 
 class FraudAlertReviewRequest(BaseModel):

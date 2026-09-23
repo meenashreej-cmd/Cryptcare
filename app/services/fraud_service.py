@@ -56,18 +56,27 @@ def _create_alert(
     patient_id: str,
     category: FraudAlertCategoryEnum,
     severity: SeverityEnum,
-    description: str,
+    counts: int,
+    related_entity_type: str | None,
+    context: str | None,
     related_resource_ids: list[str],
 ) -> FraudAlert:
     alert = FraudAlert(
         patient_id=patient_id,
         category=category,
         severity=severity,
-        description=description,
+        counts=counts,
+        related_entity_type=related_entity_type,
         related_resource_ids=",".join(related_resource_ids),
     )
     db.add(alert)
     db.flush()
+    
+    if context:
+        from app.core.encryption import encrypt
+        aad = f"cryptcare:v2|fraud_alerts|{alert.alert_id}|encrypted_context|{patient_id}"
+        alert.encrypted_context = encrypt(context, aad)
+        
     return alert
 
 
@@ -104,10 +113,11 @@ def detect_doctor_shopping(db: Session, patient_id: str, medicine_name: str) -> 
         patient_id,
         FraudAlertCategoryEnum.DOCTOR_SHOPPING,
         SeverityEnum.MODERATE if len(distinct_doctors) == 2 else SeverityEnum.SEVERE,
+        len(prescription_ids),
+        "MEDICINE",
         (
             f"Patient obtained '{medicine_name}' prescriptions from "
-            f"{len(distinct_doctors)} different doctors within the last 30 days "
-            f"({len(prescription_ids)} prescriptions)."
+            f"{len(distinct_doctors)} different doctors within the last 30 days."
         ),
         [medicine_name.lower(), *prescription_ids],
     )
@@ -147,10 +157,11 @@ def detect_prescription_tampering(db: Session, prescription_id: str, patient_id:
         patient_id,
         FraudAlertCategoryEnum.PRESCRIPTION_TAMPERING,
         SeverityEnum.SEVERE,
+        attempts,
+        "PRESCRIPTION",
         (
-            f"{attempts} failed signature verification attempts against prescription "
-            f"{prescription_id} — the QR code presented does not match the record on file "
-            f"and may be forged or tampered with."
+            f"Failed signature verification attempts against prescription {prescription_id} "
+            f"— the QR code presented does not match the record on file."
         ),
         [prescription_id],
     )
@@ -210,6 +221,8 @@ def detect_break_glass_abuse(db: Session, grantee_id: str) -> list[FraudAlert]:
             patient_id,
             FraudAlertCategoryEnum.BREAK_GLASS_ABUSE,
             SeverityEnum.SEVERE,
+            len(distinct_patients),
+            "DOCTOR",
             (
                 f"Provider {grantee_id} invoked break-glass emergency access on "
                 f"{len(distinct_patients)} different patients within 24 hours."
@@ -226,39 +239,52 @@ def detect_break_glass_abuse(db: Session, grantee_id: str) -> list[FraudAlert]:
 # Read/review — INSURER (consent-gated per patient) and ADMIN (unrestricted)
 # --------------------------------------------------------------------------
 
+def list_all_alerts(
+    db: Session, current_user: CurrentUser, status: FraudAlertStatusEnum | None, skip: int, limit: int
+) -> tuple[list[FraudAlert], int]:
+    if current_user.role != "ADMIN":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not authorized to view global fraud alerts.")
+    
+    query = db.query(FraudAlert)
+    if status:
+        query = query.filter(FraudAlert.status == status)
+        
+    total_count = query.count()
+    rows = query.order_by(FraudAlert.detected_at.desc()).offset(skip).limit(limit).all()
+    return rows, total_count
+
+
 def list_alerts_for_patient(db: Session, current_user: CurrentUser, patient_id: str) -> list[FraudAlert]:
-    if current_user.role == "ADMIN":
-        pass  # unrestricted, same as consent_service.list_all_consents
-    elif current_user.role == "INSURER":
-        if not access_control.check_vault_access(db, current_user, patient_id, "fraud_alerts", "read"):
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                "No active consent grant for this patient's fraud alerts.",
-            )
-    elif access_control.is_owner(current_user, patient_id, db):
+    if access_control.is_owner(current_user, patient_id, db):
         pass  # patients can always see alerts concerning their own record
     else:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not authorized to view fraud alerts.")
 
-    return (
+    rows = (
         db.query(FraudAlert)
         .filter(FraudAlert.patient_id == patient_id)
         .order_by(FraudAlert.detected_at.desc())
         .all()
     )
+    
+    # Decrypt context for patient (admin gets None since encrypted_context isn't shown to admin)
+    if current_user.role == "PATIENT":
+        from app.core.encryption import decrypt
+        for row in rows:
+            if row.encrypted_context:
+                aad = f"cryptcare:v2|fraud_alerts|{row.alert_id}|encrypted_context|{row.patient_id}"
+                row.encrypted_context = decrypt(row.encrypted_context, aad)
+                
+    return rows
 
 
 def review_alert(db: Session, current_user: CurrentUser, alert_id: str, new_status: FraudAlertStatusEnum) -> FraudAlert:
-    if current_user.role not in ("INSURER", "ADMIN"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only insurers and admins can review fraud alerts.")
+    if current_user.role != "ADMIN":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only admins can review fraud alerts.")
 
     alert = db.query(FraudAlert).filter(FraudAlert.alert_id == alert_id).first()
     if not alert:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Fraud alert not found.")
-
-    if current_user.role == "INSURER":
-        if not access_control.check_vault_access(db, current_user, alert.patient_id, "fraud_alerts", "read"):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "No active consent grant for this patient's fraud alerts.")
 
     if new_status not in (FraudAlertStatusEnum.REVIEWED, FraudAlertStatusEnum.DISMISSED):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "status must be REVIEWED or DISMISSED.")

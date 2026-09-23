@@ -42,7 +42,13 @@ def _register_and_activate_doctor(client, email="drtotp@cryptcare.ai"):
 
     user_id = data["user_id"]
     otp_code = _OTP_STORE[user_id]["code"]
-    verify_resp = client.post("/api/v1/auth/verify-otp", json={"user_id": user_id, "otp_code": otp_code})
+    
+    # Need to login to get the otp_verification preauth token
+    login_resp = client.post("/api/v1/auth/login", json={"email": email, "password": "Password123!"})
+    assert login_resp.status_code == 200
+    preauth_token = login_resp.json()["preauth_token"]
+    
+    verify_resp = client.post("/api/v1/auth/verify-otp", json={"otp_code": otp_code}, headers={"Authorization": f"Bearer {preauth_token}"})
     assert verify_resp.status_code == 200, verify_resp.text
 
     return user_id, secret
@@ -61,51 +67,79 @@ def test_mfa_provisioning_uri_only_for_mfa_roles(client):
     assert response.json()["mfa_provisioning_uri"] is None
 
 
-def test_login_rejected_without_mfa_code(client):
-    _, secret = _register_and_activate_doctor(client, email="drtotp_nocode@cryptcare.ai")
+def test_login_requires_enrollment_for_new_mfa_user(client):
+    user_id, secret = _register_and_activate_doctor(client, email="drtotp_enroll@cryptcare.ai")
+    
     resp = client.post(
         "/api/v1/auth/login",
-        json={"email": "drtotp_nocode@cryptcare.ai", "password": "Password123!"},
+        json={"email": "drtotp_enroll@cryptcare.ai", "password": "Password123!"},
     )
-    assert resp.status_code == 401
-    assert "MFA code required" in resp.text
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data.get("requires_mfa_enrollment") is True
+    assert "preauth_token" in data
+    
+    protected = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {data['preauth_token']}"})
+    assert protected.status_code == 401
+    assert "token" in protected.text.lower()
 
 
-def test_login_rejected_with_wrong_mfa_code(client):
-    _, secret = _register_and_activate_doctor(client, email="drtotp_wrong@cryptcare.ai")
-    resp = client.post(
-        "/api/v1/auth/login",
-        json={"email": "drtotp_wrong@cryptcare.ai", "password": "Password123!", "otp_code": "000000"},
-    )
-    assert resp.status_code == 401
-    assert "Invalid MFA code" in resp.text
-
-
-def test_login_succeeds_with_valid_totp_code(client):
-    _, secret = _register_and_activate_doctor(client, email="drtotp_valid@cryptcare.ai")
+def test_enroll_mfa_success_and_reuse_blocked(client):
+    user_id, secret = _register_and_activate_doctor(client, email="drtotp_enroll_succ@cryptcare.ai")
+    
+    resp = client.post("/api/v1/auth/login", json={"email": "drtotp_enroll_succ@cryptcare.ai", "password": "Password123!"})
+    preauth_token = resp.json()["preauth_token"]
+    
     totp = pyotp.TOTP(secret)
-    resp = client.post(
-        "/api/v1/auth/login",
-        json={"email": "drtotp_valid@cryptcare.ai", "password": "Password123!", "otp_code": totp.now()},
+    enroll_resp = client.post(
+        "/api/v1/auth/enroll-mfa",
+        json={"otp_code": totp.now()},
+        headers={"Authorization": f"Bearer {preauth_token}"}
     )
-    assert resp.status_code == 200, resp.text
-    assert "access_token" in resp.json()
+    assert enroll_resp.status_code == 200
+    
+    enroll_resp2 = client.post(
+        "/api/v1/auth/enroll-mfa",
+        json={"otp_code": totp.now()},
+        headers={"Authorization": f"Bearer {preauth_token}"}
+    )
+    assert enroll_resp2.status_code == 401
+    assert "already used" in enroll_resp2.text.lower()
 
 
-def test_totp_code_cannot_be_replayed(client):
-    _, secret = _register_and_activate_doctor(client, email="drtotp_replay@cryptcare.ai")
+def test_login_fails_with_wrong_or_missing_code(client):
+    user_id, secret = _register_and_activate_doctor(client, email="drtotp_login_fail@cryptcare.ai")
+    
+    resp = client.post("/api/v1/auth/login", json={"email": "drtotp_login_fail@cryptcare.ai", "password": "Password123!"})
+    preauth_token = resp.json()["preauth_token"]
+    
     totp = pyotp.TOTP(secret)
-    code = totp.now()
+    client.post("/api/v1/auth/enroll-mfa", json={"otp_code": totp.now()}, headers={"Authorization": f"Bearer {preauth_token}"})
+    
+    resp_nocode = client.post("/api/v1/auth/login", json={"email": "drtotp_login_fail@cryptcare.ai", "password": "Password123!"})
+    assert resp_nocode.status_code == 401
+    assert "MFA code required" in resp_nocode.text
+    
+    resp_wrong = client.post("/api/v1/auth/login", json={"email": "drtotp_login_fail@cryptcare.ai", "password": "Password123!", "otp_code": "000000"})
+    assert resp_wrong.status_code == 401
+    assert "Invalid or expired MFA code" in resp_wrong.text
 
-    first = client.post(
-        "/api/v1/auth/login",
-        json={"email": "drtotp_replay@cryptcare.ai", "password": "Password123!", "otp_code": code},
-    )
-    assert first.status_code == 200, first.text
 
-    second = client.post(
-        "/api/v1/auth/login",
-        json={"email": "drtotp_replay@cryptcare.ai", "password": "Password123!", "otp_code": code},
-    )
-    assert second.status_code == 401
-    assert "already been used" in second.text
+def test_login_succeeds_and_prevents_replay(client):
+    user_id, secret = _register_and_activate_doctor(client, email="drtotp_login_succ@cryptcare.ai")
+    
+    resp = client.post("/api/v1/auth/login", json={"email": "drtotp_login_succ@cryptcare.ai", "password": "Password123!"})
+    preauth_token = resp.json()["preauth_token"]
+    
+    totp = pyotp.TOTP(secret)
+    client.post("/api/v1/auth/enroll-mfa", json={"otp_code": totp.now()}, headers={"Authorization": f"Bearer {preauth_token}"})
+    
+    import time
+    next_code = totp.at(int(time.time()) + 30)
+    
+    resp_valid = client.post("/api/v1/auth/login", json={"email": "drtotp_login_succ@cryptcare.ai", "password": "Password123!", "otp_code": next_code})
+    assert resp_valid.status_code == 200
+    
+    resp_replay = client.post("/api/v1/auth/login", json={"email": "drtotp_login_succ@cryptcare.ai", "password": "Password123!", "otp_code": next_code})
+    assert resp_replay.status_code == 401
+    assert "invalid or expired" in resp_replay.text.lower()

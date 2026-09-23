@@ -10,5 +10,6 @@ def get_pending_verifications(db: Session, current_user: CurrentUser) -> list[Us
         raise HTTPException(status_code=403, detail="Only admins can view pending verifications.")
     
     return db.query(User).filter(
-        User.status == UserStatusEnum.PENDING_VERIFICATION
+        User.status == UserStatusEnum.PENDING_VERIFICATION,
+        User.role != RoleEnum.PATIENT
     ).order_by(User.created_at.asc()).all()

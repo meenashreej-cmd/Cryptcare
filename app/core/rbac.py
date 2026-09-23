@@ -15,8 +15,11 @@ from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
 
 from app.core.security import TokenError, verify_access_token
+from app.db.session import get_db
+from app.models.user import User, UserStatusEnum
 
 # NOTE: This project uses a custom JSON login (email/password/otp_code) —
 # not the OAuth2 "Resource Owner Password Credentials" grant. OAuth2PasswordBearer
@@ -37,6 +40,7 @@ class CurrentUser:
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
 ) -> CurrentUser:
     token = credentials.credentials
     try:
@@ -47,12 +51,48 @@ def get_current_user(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if payload.get("type") != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type, expected access token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user = db.query(User).filter(User.user_id == payload["sub"]).first()
+    if not user or user.status != UserStatusEnum.ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or not active",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Use the role directly from the DB as the single source of truth
+    # rather than trusting the JWT role which might be stale or tampered.
+    db_role = user.role.value
+    
     return CurrentUser(
-        id=payload["sub"],
-        role=payload["role"],
+        id=user.user_id,
+        role=db_role,
         permissions=payload.get("permissions", []),
     )
 
+def get_preauth_user_for(purpose: str):
+    def _dependency(
+        credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    ) -> dict:
+        token = credentials.credentials
+        try:
+            from app.core.security import verify_preauth_token
+            payload = verify_preauth_token(token, expected_purpose=purpose)
+        except TokenError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(exc),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return payload
+    return _dependency
 
 def require_role(*allowed_roles: str):
     """Returns a FastAPI dependency that enforces the caller's role is in allowed_roles."""

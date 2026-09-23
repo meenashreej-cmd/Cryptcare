@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timedelta
+from datetime import datetime, timedelta
 
 from app.core.qr import build_prescription_qr_payload
 from app.core.security import create_access_token, hash_password
@@ -87,7 +87,7 @@ def test_doctor_shopping_alert_fires_across_two_doctors(client, db):
     assert len(alerts) == 1
     assert alerts[0]["category"] == FraudAlertCategoryEnum.DOCTOR_SHOPPING.value
     assert alerts[0]["status"] == "OPEN"
-    assert "tramadol" in alerts[0]["description"].lower() or "Tramadol" in alerts[0]["description"]
+    assert "tramadol" in alerts[0]["encrypted_context"].lower() or "Tramadol" in alerts[0]["encrypted_context"]
 
 
 def test_prescription_tampering_alert_after_two_failed_scans(client, db):
@@ -175,7 +175,7 @@ def test_break_glass_abuse_flagged_across_three_patients(client, db):
         assert abuse_alerts[0]["severity"] == "SEVERE"
 
 
-def test_insurer_needs_consent_to_view_alerts_and_can_review(client, db):
+def test_admin_can_view_and_review_alerts(client, db):
     patient_user = _make_user(db, "fraud_patient4@cryptcare.ai", "+9100000010", RoleEnum.PATIENT, "Fraud Patient 4")
     patient_profile = PatientProfile(user_id=patient_user.user_id)
     db.add(patient_profile)
@@ -185,8 +185,7 @@ def test_insurer_needs_consent_to_view_alerts_and_can_review(client, db):
     db.add(DoctorProfile(user_id=doctor_a.user_id, license_number="DOC-4A"))
     doctor_b = _make_user(db, "fraud_doc4b@cryptcare.ai", "+9100000012", RoleEnum.DOCTOR, "Dr. 4B")
     db.add(DoctorProfile(user_id=doctor_b.user_id, license_number="DOC-4B"))
-    insurer_user = _make_user(db, "fraud_insurer4@cryptcare.ai", "+9100000013", RoleEnum.INSURER, "Insurer 4")
-    db.add(InsurerProfile(user_id=insurer_user.user_id, license_number="INS-4"))
+    admin_user = _make_user(db, "fraud_admin4@cryptcare.ai", "+9100000013", RoleEnum.ADMIN, "Admin 4")
     db.commit()
 
     _grant_doctor_consent(db, patient_profile.patient_id, doctor_a.user_id)
@@ -194,7 +193,7 @@ def test_insurer_needs_consent_to_view_alerts_and_can_review(client, db):
 
     doctor_a_headers = get_auth_header(doctor_a.user_id, RoleEnum.DOCTOR)
     doctor_b_headers = get_auth_header(doctor_b.user_id, RoleEnum.DOCTOR)
-    insurer_headers = get_auth_header(insurer_user.user_id, RoleEnum.INSURER)
+    admin_headers = get_auth_header(admin_user.user_id, RoleEnum.ADMIN)
     patient_headers = get_auth_header(patient_user.user_id, RoleEnum.PATIENT)
 
     rx_payload = lambda: {
@@ -206,35 +205,26 @@ def test_insurer_needs_consent_to_view_alerts_and_can_review(client, db):
     client.post("/api/v1/vault/prescriptions", json=rx_payload(), headers=doctor_a_headers)
     client.post("/api/v1/vault/prescriptions", json=rx_payload(), headers=doctor_b_headers)
 
-    # Insurer has no consent yet — blocked
-    resp = client.get(f"/api/v1/fraud/alerts/{patient_profile.patient_id}", headers=insurer_headers)
+    # Admin cannot view patient-specific alerts endpoint (restricted to PATIENT)
+    resp = client.get(f"/api/v1/fraud/alerts/{patient_profile.patient_id}", headers=admin_headers)
     assert resp.status_code == 403
 
-    # Insurer requests consent to fraud_alerts; patient approves
-    resp = client.post(
-        "/api/v1/consent/request",
-        json={"patient_id": patient_profile.patient_id, "resource_type": "fraud_alerts", "permission": "READ"},
-        headers=insurer_headers,
-    )
-    assert resp.status_code == 201, resp.text
-    consent_id = resp.json()["consent_id"]
-
-    resp = client.put(f"/api/v1/consent/{consent_id}/approve", json={"duration_days": 30}, headers=patient_headers)
-    assert resp.status_code == 200, resp.text
-
-    # Now insurer can view
-    resp = client.get(f"/api/v1/fraud/alerts/{patient_profile.patient_id}", headers=insurer_headers)
+    # Admin uses the global queue instead
+    resp = client.get(f"/api/v1/fraud/alerts", headers=admin_headers)
     assert resp.status_code == 200
     alerts = resp.json()["alerts"]
-    assert len(alerts) == 1
+    assert len(alerts) >= 1
     alert_id = alerts[0]["alert_id"]
     assert alerts[0]["status"] == "OPEN"
+    # Admin gets sanitized view
+    assert "encrypted_context" not in alerts[0]
+    assert "patient_id" not in alerts[0]
 
-    # Insurer reviews (dismisses) the alert
-    resp = client.put(f"/api/v1/fraud/alerts/{alert_id}/review", json={"status": "DISMISSED"}, headers=insurer_headers)
+    # Admin reviews (dismisses) the alert
+    resp = client.put(f"/api/v1/fraud/alerts/{alert_id}/review", json={"status": "DISMISSED"}, headers=admin_headers)
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "DISMISSED"
-    assert resp.json()["reviewed_by"] == insurer_user.user_id
+    assert resp.json()["reviewed_by"] == admin_user.user_id
 
     resp = client.get(f"/api/v1/fraud/alerts/{patient_profile.patient_id}", headers=patient_headers)
     assert resp.status_code == 200

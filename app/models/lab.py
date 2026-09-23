@@ -22,5 +22,5 @@ class LabTestRequest(Base):
     doctor_id: Mapped[str] = mapped_column(String(36), ForeignKey("doctor_profiles.doctor_id"), nullable=True)
     test_name: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[LabRequestStatusEnum] = mapped_column(Enum(LabRequestStatusEnum), default=LabRequestStatusEnum.REQUESTED)
-    assigned_lab_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.user_id"), nullable=True)
+    assigned_lab_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("lab_profiles.lab_id"), nullable=True)
     requested_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -22,20 +22,13 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from app.core.config import settings
+from app.utils.network import get_client_ip
 
 # path -> (max requests, window seconds). Matched by exact path, not prefix —
 # deliberate, so a change to one auth route's limit can't accidentally loosen
 # another's.
-_SENSITIVE_LIMITS: dict[str, tuple[int, int]] = {
-    "/api/v1/auth/login": (settings.RATE_LIMIT_LOGIN_MAX, settings.RATE_LIMIT_LOGIN_WINDOW_SECONDS),
-    "/api/v1/auth/verify-otp": (settings.RATE_LIMIT_OTP_MAX, settings.RATE_LIMIT_OTP_WINDOW_SECONDS),
-}
-_SENSITIVE_PREFIXES: dict[str, tuple[int, int]] = {
-    "/api/v1/emergency/access/": (
-        settings.RATE_LIMIT_EMERGENCY_ACCESS_MAX,
-        settings.RATE_LIMIT_EMERGENCY_ACCESS_WINDOW_SECONDS,
-    ),
-}
+_SENSITIVE_LIMITS: dict[str, tuple[int, int]] = {}
+_SENSITIVE_PREFIXES: dict[str, tuple[int, int]] = {}
 _DEFAULT_LIMIT: tuple[int, int] = (
     settings.RATE_LIMIT_DEFAULT_MAX,
     settings.RATE_LIMIT_DEFAULT_WINDOW_SECONDS,
@@ -52,8 +45,8 @@ def reset() -> None:
 
 
 def _client_key(request: Request) -> str:
-    client_host = request.client.host if request.client else "unknown"
-    return f"{client_host}:{request.url.path}"
+    client_ip = get_client_ip(request)
+    return f"{client_ip}:{request.url.path}"
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

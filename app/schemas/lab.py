@@ -18,7 +18,7 @@ class LabTestRequestResponse(BaseModel):
     doctor_id: str | None
     test_name: str
     status: LabRequestStatusEnum
-    assigned_lab_user_id: str | None
+    assigned_lab_id: str | None
     requested_at: datetime
 
     class Config:

@@ -39,25 +39,8 @@ class RegisterRequest(BaseModel):
             raise ValueError("Password must contain at least one uppercase letter")
         return v
 
-<<<<<<< Updated upstream
-    @field_validator("license_number")
-    @classmethod
-    def license_required_for_professional_roles(cls, v, info):
-        role = info.data.get("role")
-        if role in (RoleEnum.DOCTOR, RoleEnum.NURSE, RoleEnum.LAB, RoleEnum.PHARMACIST, RoleEnum.INSURER, RoleEnum.BLOOD_BANK) and not v:
-            raise ValueError(f"license_number is required for role {role}")
-        return v
-        
-    @field_validator("hospital_name")
-    @classmethod
-    def hospital_name_required_for_hospital_admin(cls, v, info):
-        role = info.data.get("role")
-        if role == RoleEnum.HOSPITAL_ADMIN and not v:
-            raise ValueError("hospital_name is required for HOSPITAL_ADMIN")
-        return v
-=======
     @model_validator(mode="after")
-    def license_required_for_professional_roles(self) -> "RegisterRequest":
+    def required_fields_by_role(self) -> "RegisterRequest":
         """
         Uses model_validator (runs after all fields are parsed) so `role`
         is always available — field_validator on license_number ran before
@@ -65,9 +48,9 @@ class RegisterRequest(BaseModel):
         """
         if self.role in _PROFESSIONAL_ROLES and not self.license_number:
             raise ValueError(f"license_number is required for role {self.role}")
+        if self.role == RoleEnum.HOSPITAL_ADMIN and not self.hospital_name:
+            raise ValueError("hospital_name is required for HOSPITAL_ADMIN")
         return self
->>>>>>> Stashed changes
-
 
 class RegisterResponse(BaseModel):
     user_id: str
@@ -83,7 +66,6 @@ class RegisterResponse(BaseModel):
 
 
 class VerifyOtpRequest(BaseModel):
-    user_id: str
     otp_code: str = Field(min_length=4, max_length=8)
 
 
@@ -94,8 +76,11 @@ class LoginRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
+    access_token: Optional[str] = None
+    preauth_token: Optional[str] = None
+    requires_otp: bool = False
+    requires_password_change: bool = False
+    requires_mfa_enrollment: bool = False
     token_type: str = "bearer"
 
 
@@ -118,3 +103,18 @@ class UserProfileResponse(BaseModel):
 class UpdateProfileRequest(BaseModel):
     full_name: Optional[str] = None
     phone: Optional[str] = None
+
+class ChangePasswordRequest(BaseModel):
+    new_password: str = Field(min_length=10, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_complexity(cls, v: str) -> str:
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one digit")
+        if not any(c.isupper() for c in v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        return v
+
+class ChangePasswordVoluntaryRequest(ChangePasswordRequest):
+    current_password: str

@@ -25,8 +25,12 @@ def update_emergency_contact(
     return emergency_service.get_emergency_qr_status(db, current_user)
 
 
+from app.utils.network import get_client_ip
+from app.services.auth_service import _check_action_rate_limit
+
 @router.post("/qr", response_class=Response, responses={200: {"content": {"image/png": {}}}})
 def generate_emergency_qr(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(require_role("PATIENT")),
 ):
@@ -35,6 +39,10 @@ def generate_emergency_qr(
     Regenerating immediately invalidates any QR issued before it — print or
     save the new image, the old one stops working.
     """
+    client_ip = get_client_ip(request)
+    _check_action_rate_limit(db, current_user.id, "generate_qr", limit=3, window_seconds=86400, is_ip=False)
+    _check_action_rate_limit(db, client_ip, "generate_qr", limit=10, window_seconds=60, is_ip=True)
+    
     png_bytes = emergency_service.generate_emergency_qr(db, current_user)
     return Response(content=png_bytes, media_type="image/png")
 

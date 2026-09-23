@@ -98,14 +98,29 @@ def start_processing(db: Session, current_user: CurrentUser, request_id: str) ->
     if current_user.role != "LAB":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only lab staff can begin processing a request")
 
+    from app.models.user import LabProfile
+    lab_profile = db.query(LabProfile).filter(LabProfile.user_id == current_user.id).first()
+    if not lab_profile:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Lab profile not found")
+
     request = db.query(LabTestRequest).filter(LabTestRequest.request_id == request_id).first()
     if not request:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lab test request not found")
     if request.status != LabRequestStatusEnum.REQUESTED:
         raise HTTPException(status.HTTP_409_CONFLICT, f"Request is already {request.status.value}")
 
-    request.status = LabRequestStatusEnum.IN_PROGRESS
-    request.assigned_lab_user_id = current_user.id
+    updated_count = db.query(LabTestRequest).filter(
+        LabTestRequest.request_id == request_id,
+        LabTestRequest.status == LabRequestStatusEnum.REQUESTED
+    ).update({
+        "status": LabRequestStatusEnum.IN_PROGRESS,
+        "assigned_lab_id": lab_profile.lab_id
+    })
+    
+    if updated_count == 0:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Request was concurrently claimed by another lab technician")
+        
     db.commit()
     db.refresh(request)
     return request
@@ -161,22 +176,20 @@ def upload_report(
     summary_text: str,
     document_type: DocumentTypeEnum = DocumentTypeEnum.LAB_SUMMARY,
 ) -> LabReport:
-    if current_user.role not in ("LAB", "PATIENT"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only lab staff and patients can upload reports")
+    if current_user.role != "LAB":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only lab staff can upload reports")
 
     request = db.query(LabTestRequest).filter(LabTestRequest.request_id == request_id).first()
     if not request:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lab test request not found")
 
-    if current_user.role == "LAB":
-        if request.status != LabRequestStatusEnum.IN_PROGRESS:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Request must be IN_PROGRESS before a lab can upload a report")
-        if request.assigned_lab_user_id != current_user.id:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "This request is assigned to a different lab technician")
-    else:
-        # Patient is uploading their own report, bypass the IN_PROGRESS check
-        if request.patient_id != _resolve_user_id_for_patient(db, request.patient_id):
-             raise HTTPException(status.HTTP_403_FORBIDDEN, "Patients can only upload their own reports")
+    if request.status != LabRequestStatusEnum.IN_PROGRESS:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Request must be IN_PROGRESS before a lab can upload a report")
+
+    from app.models.user import LabProfile
+    lab_profile = db.query(LabProfile).filter(LabProfile.user_id == current_user.id).first()
+    if not lab_profile or request.assigned_lab_id != lab_profile.lab_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "This request is assigned to a different lab technician")
 
     report = LabReport(
         patient_id=request.patient_id,

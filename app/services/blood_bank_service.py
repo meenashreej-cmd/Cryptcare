@@ -323,21 +323,24 @@ def reject_and_broadcast_shortage(db: Session, current_user: CurrentUser, reques
     _write_access_log(db, current_user.id, request.request_id, AccessActionEnum.WRITE, patient_id=request.patient_id)
     _notify_patient(db, request, "rejected")
 
-    # 2. Check cooldown globally for this blood group
+    # 2. Check cooldown globally for this blood group using compare-and-set
     from app.models.blood_bank import BroadcastCooldown
     from datetime import timedelta
     now = datetime.utcnow()
+    cutoff = now - timedelta(minutes=15)
     
-    cooldown = db.query(BroadcastCooldown).filter(BroadcastCooldown.blood_group == request.blood_group).with_for_update().first()
-    if cooldown and cooldown.last_broadcast_at > now - timedelta(minutes=15):
+    cooldown_updated = db.query(BroadcastCooldown).filter(
+        BroadcastCooldown.blood_group == request.blood_group,
+        BroadcastCooldown.component == request.component,
+        BroadcastCooldown.last_broadcast_at <= cutoff
+    ).update({
+        "last_broadcast_at": now
+    })
+    
+    if cooldown_updated == 0:
+        # Either on cooldown or missing row (which should be pre-seeded)
         db.commit()
         return request
-        
-    if cooldown:
-        cooldown.last_broadcast_at = now
-    else:
-        cooldown = BroadcastCooldown(blood_group=request.blood_group, last_broadcast_at=now)
-        db.add(cooldown)
     
     # 3. Broadcast URGENT_BLOOD_SHORTAGE to all patients, doctors, and nurses
     users_to_notify = db.query(User).filter(User.role.in_(["PATIENT", "DOCTOR", "NURSE"])).all()

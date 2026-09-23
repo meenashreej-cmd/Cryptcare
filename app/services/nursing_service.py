@@ -118,7 +118,11 @@ from datetime import datetime
 def assign_nurse(db: Session, current_user: CurrentUser, payload: NurseAssignmentRequest) -> dict:
     if current_user.role != "DOCTOR":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors can assign nurses to a care team")
-        
+
+    from app.services.access_control import check_vault_access
+    if not check_vault_access(db, current_user, payload.patient_id, "vitals", "read"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Must have active care relationship (e.g., vitals read consent) to assign a nurse.")
+
     from app.models.user import User, PatientProfile
     nurse = db.query(User).filter(User.user_id == payload.nurse_id, User.role == "NURSE").first()
     if not nurse:
@@ -154,7 +158,7 @@ def assign_nurse(db: Session, current_user: CurrentUser, payload: NurseAssignmen
     db.add(row)
     db.flush()
     
-    _write_access_log(db, current_user.id, "consent", row.consent_id, AccessActionEnum.CONSENT_REQUESTED, patient_id=payload.patient_id)
+    _write_access_log(db, current_user.id, row.consent_id, AccessActionEnum.CONSENT_REQUESTED, patient_id=payload.patient_id)
     
     from app.services import notification_service
     from app.models.notification import NotificationTypeEnum
@@ -192,14 +196,33 @@ def remove_nurse(db: Session, current_user: CurrentUser, assignment_id: str) -> 
     row = db.query(ConsentRequest).filter(ConsentRequest.consent_id == assignment_id).first()
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignment not found")
-        
+
+    from app.services.access_control import check_vault_access
+    if not check_vault_access(db, current_user, row.patient_id, "vitals", "read"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Must have active care relationship to remove a nurse.")
+
     if row.status not in (ConsentStatusEnum.ACTIVE, ConsentStatusEnum.PENDING):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Assignment is already removed or rejected")
         
     row.status = ConsentStatusEnum.REVOKED
     row.revoked_at = datetime.utcnow()
     
-    _write_access_log(db, current_user.id, "consent", row.consent_id, AccessActionEnum.CONSENT_REVOKED, patient_id=row.patient_id)
+    _write_access_log(db, current_user.id, row.consent_id, AccessActionEnum.NURSE_REMOVED, patient_id=row.patient_id)
+
+    from app.services import notification_service
+    from app.models.notification import NotificationTypeEnum
+    from app.models.user import PatientProfile
+    
+    patient = db.query(PatientProfile).filter(PatientProfile.patient_id == row.patient_id).first()
+    notification_service.create_notification(
+        db,
+        recipient_id=patient.user_id,
+        notif_type=NotificationTypeEnum.CONSENT_DECISION,
+        message=f"Dr. {current_user.id[:8]} has removed Nurse {row.grantee_id[:8]} from your care team.",
+        resource_type="consent",
+        resource_id=row.consent_id,
+    )
+
     db.commit()
     db.refresh(row)
     

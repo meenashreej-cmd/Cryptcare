@@ -65,9 +65,9 @@ class FraudAlert(Base):
     status: Mapped[FraudAlertStatusEnum] = mapped_column(
         Enum(FraudAlertStatusEnum), default=FraudAlertStatusEnum.OPEN, nullable=False
     )
-    # Free-text summary only — deliberately NOT encrypted PHI (e.g. medicine
-    # names, not diagnoses), same visibility level as an audit log entry.
-    description: Mapped[str] = mapped_column(String(1024), nullable=False)
+    counts: Mapped[int] = mapped_column(default=1, nullable=False)
+    related_entity_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    encrypted_context: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # Comma-joined list of related resource IDs (prescription_ids, consent_ids)
     # that triggered this alert — kept as plain text rather than a join table
     # since alerts are read-mostly and the set is small (2-5 IDs typically).

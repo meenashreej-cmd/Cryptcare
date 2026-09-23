@@ -17,8 +17,11 @@ explanation quality degrades, but a safety check can never silently pass
 import json
 import urllib.error
 import urllib.request
+import threading
 
 from app.core.config import settings
+
+_llm_semaphore = threading.Semaphore(2)
 
 
 def _call_ollama(prompt: str) -> str | None:
@@ -38,10 +41,19 @@ def _call_ollama(prompt: str) -> str | None:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=settings.LOCAL_LLM_TIMEOUT_SECONDS) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-            text = payload.get("response", "").strip()
-            return text or None
+        if not _llm_semaphore.acquire(timeout=5.0):
+            return None
+        
+        try:
+            with urllib.request.urlopen(request, timeout=settings.LOCAL_LLM_TIMEOUT_SECONDS) as response:
+                raw_data = response.read(65536)
+                if response.read(1):  # if more data is available, it exceeded 64KB
+                    return None
+                payload = json.loads(raw_data.decode("utf-8"))
+                text = payload.get("response", "").strip()
+                return text or None
+        finally:
+            _llm_semaphore.release()
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
         # Connection refused (Ollama not running), DNS failure, timeout,
         # malformed response — all treated the same: no explanation

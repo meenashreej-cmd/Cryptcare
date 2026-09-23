@@ -46,7 +46,12 @@ from app.models.fraud import FraudAlert, FraudAlertCategoryEnum, FraudAlertStatu
 from app.models.notification import Notification, NotificationTypeEnum
 
 NOW = datetime.now(timezone.utc).replace(tzinfo=None)
-PASSWORD = "Password123"  # meets: >=10 chars, 1 upper, 1 digit
+
+PASSWORD = os.environ.get("CRYPTCARE_SEED_PASSWORD")
+if not PASSWORD:
+    import getpass
+    print("\nWarning: No CRYPTCARE_SEED_PASSWORD environment variable found.")
+    PASSWORD = getpass.getpass("Enter password for demo accounts (must be >=10 chars, 1 upper, 1 digit): ")
 
 
 def seed_db():
@@ -195,6 +200,7 @@ def seed_db():
             "admin@example.com", "+919999999999",
             "K. Okafor", RoleEnum.ADMIN,
         )
+        admin_user.must_change_password = True
         db.flush()
 
         print("Users + profiles created.")
@@ -331,7 +337,7 @@ def seed_db():
                 doctor_id=doctor_profile.doctor_id,
                 test_name=test_name,
                 status=status,
-                assigned_lab_user_id=lab_user.user_id,
+                assigned_lab_id=lab_profile.lab_id,
                 requested_at=NOW - timedelta(days=days_ago),
             )
             db.add(req)
@@ -470,7 +476,7 @@ def seed_db():
                 category=FraudAlertCategoryEnum.DOCTOR_SHOPPING,
                 severity=SeverityEnum.SEVERE,
                 status=FraudAlertStatusEnum.OPEN,
-                description="Patient obtained prescriptions for Metformin from 2 distinct doctors within a 30-day window.",
+                encrypted_context=encrypt("Patient obtained prescriptions for Metformin from 2 distinct doctors within a 30-day window."),
                 related_resource_ids=f"{rx1.prescription_id},{rx2.prescription_id}",
                 detected_at=NOW - timedelta(hours=3),
             ),
@@ -479,7 +485,7 @@ def seed_db():
                 category=FraudAlertCategoryEnum.PRESCRIPTION_TAMPERING,
                 severity=SeverityEnum.MODERATE,
                 status=FraudAlertStatusEnum.REVIEWED,
-                description="2 signature-verification failures detected against prescription RX. Possible QR tampering attempt.",
+                encrypted_context=encrypt("2 signature-verification failures detected against prescription RX. Possible QR tampering attempt."),
                 related_resource_ids=rx3.prescription_id,
                 detected_at=NOW - timedelta(days=1),
             ),

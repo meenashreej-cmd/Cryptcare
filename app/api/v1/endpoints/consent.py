@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.rbac import CurrentUser, get_current_user, require_role
 from app.db.session import get_db
+from app.utils.network import get_client_ip
+from app.services.auth_service import _check_action_rate_limit
 from app.schemas.consent import (
     BreakGlassRequest,
     CaregiverGrantRequest,
@@ -24,9 +27,13 @@ router = APIRouter(prefix="/consent", tags=["Phase 4 — Consent Management"])
 @router.post("/request", response_model=ConsentResponse, status_code=201)
 def request_consent(
     payload: ConsentRequestCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(require_role("DOCTOR", "NURSE", "LAB", "INSURER")),
 ):
+    client_ip = get_client_ip(request)
+    _check_action_rate_limit(db, current_user.id, "consent_request", limit=20, window_seconds=3600, is_ip=False)
+    _check_action_rate_limit(db, client_ip, "consent_request", limit=100, window_seconds=3600, is_ip=True)
     return consent_service.request_consent(db, current_user, payload)
 
 
@@ -120,12 +127,16 @@ def activity_timeline(
 @router.post("/break-glass", response_model=ConsentResponse, status_code=201)
 def break_glass_access(
     payload: BreakGlassRequest,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(require_role("DOCTOR", "LAB")),
+    current_user: CurrentUser = Depends(require_role(*settings.BREAK_GLASS_ALLOWED_ROLES)),
 ):
     """Emergency override — bypasses patient approval entirely. Time-boxed,
     distinctly logged, and always triggers an immediate patient notification.
     See consent_service.break_glass_access for the full rationale."""
+    client_ip = get_client_ip(request)
+    _check_action_rate_limit(db, current_user.id, "break_glass", limit=3, window_seconds=3600, is_ip=False)
+    _check_action_rate_limit(db, client_ip, "break_glass", limit=10, window_seconds=60, is_ip=True)
     return consent_service.break_glass_access(db, current_user, payload)
 
 
