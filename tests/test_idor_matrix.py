@@ -4,10 +4,18 @@ from datetime import datetime, timedelta
 from app.core.security import create_access_token, hash_password
 from app.core.encryption import encrypt
 import unittest.mock
-from app.models.user import RoleEnum, User, PatientProfile, DoctorProfile, UserStatusEnum
+from app.models.user import (
+    RoleEnum, User, PatientProfile, DoctorProfile, UserStatusEnum,
+    NurseProfile, LabProfile, PharmacistProfile, BloodBankProfile, InsurerProfile,
+)
 from app.models.consent import ConsentRequest, ConsentStatusEnum, GranteeTypeEnum, ResourceTypeEnum, PermissionEnum
 from app.models.vault import Prescription, Allergy, Vaccination
-from app.models.lab import LabTestRequest
+from app.models.lab import LabTestRequest, LabRequestStatusEnum
+from app.models.fraud import FraudAlert, FraudAlertCategoryEnum, FraudAlertStatusEnum
+from app.models.vault import SeverityEnum
+from app.models.blood_bank import BloodRequest, BloodComponentEnum, BloodRequestStatusEnum, BloodRequestUrgencyEnum
+from app.models.insurance import InsuranceClaim, ClaimStatusEnum
+from app.models.notification import Notification, NotificationTypeEnum
 
 @pytest.fixture(autouse=True)
 def mock_verify_sig():
@@ -16,68 +24,152 @@ def mock_verify_sig():
 
 @pytest.fixture
 def idor_data(db):
-    # Patient A
-    pA_user = User(email="pA@c.ai", phone="+100", password_hash=hash_password("x"), role=RoleEnum.PATIENT, full_name="A", status=UserStatusEnum.ACTIVE)
-    db.add(pA_user)
-    db.flush()
-    pA_prof = PatientProfile(user_id=pA_user.user_id)
-    db.add(pA_prof)
+    def make_user(role, email, phone, license=None, extra_profile=None):
+        u = User(email=email, phone=phone, password_hash=hash_password("x"),
+                 role=role, full_name=email, status=UserStatusEnum.ACTIVE)
+        db.add(u)
+        db.flush()
+        return u
 
-    # Patient B
-    pB_user = User(email="pB@c.ai", phone="+200", password_hash=hash_password("x"), role=RoleEnum.PATIENT, full_name="B", status=UserStatusEnum.ACTIVE)
-    db.add(pB_user)
-    db.flush()
+    # Two patients
+    pA_user = make_user(RoleEnum.PATIENT, "pA@c.ai", "+100")
+    pB_user = make_user(RoleEnum.PATIENT, "pB@c.ai", "+200")
+    pA_prof = PatientProfile(user_id=pA_user.user_id)
     pB_prof = PatientProfile(user_id=pB_user.user_id)
-    db.add(pB_prof)
+    db.add(pA_prof); db.add(pB_prof); db.flush()
 
     # Doctor A
-    dA_user = User(email="dA@c.ai", phone="+300", password_hash=hash_password("x"), role=RoleEnum.DOCTOR, full_name="Doc A", status=UserStatusEnum.ACTIVE)
-    db.add(dA_user)
-    db.flush()
-    dA_prof = DoctorProfile(user_id=dA_user.user_id, license_number="D-A")
-    db.add(dA_prof)
+    dA_user = make_user(RoleEnum.DOCTOR, "dA@c.ai", "+300")
+    dA_prof = DoctorProfile(user_id=dA_user.user_id, license_number="D-A-idor")
+    db.add(dA_prof); db.flush()
+
+    # Lab A
+    labA_user = make_user(RoleEnum.LAB, "labA@c.ai", "+400")
+    labA_prof = LabProfile(user_id=labA_user.user_id, license_number="L-A-idor", lab_name="Lab A")
+    db.add(labA_prof); db.flush()
+
+    # Pharmacist A
+    pharmA_user = make_user(RoleEnum.PHARMACIST, "pharmA@c.ai", "+500")
+    pharmA_prof = PharmacistProfile(user_id=pharmA_user.user_id, license_number="PH-A-idor")
+    db.add(pharmA_prof); db.flush()
+
+    # Blood Bank A
+    bbA_user = make_user(RoleEnum.BLOOD_BANK, "bbA@c.ai", "+600")
+    bbA_prof = BloodBankProfile(user_id=bbA_user.user_id, license_number="BB-A-idor", facility_name="BB A")
+    db.add(bbA_prof); db.flush()
+
+    # Insurer A
+    insA_user = make_user(RoleEnum.INSURER, "insA@c.ai", "+700")
+    insA_prof = InsurerProfile(user_id=insA_user.user_id, license_number="INS-A-idor", company_name="Ins A")
+    db.add(insA_prof); db.flush()
+
+    # Admin A
+    adminA_user = make_user(RoleEnum.ADMIN, "adminA@c.ai", "+800")
 
     db.commit()
-    db.refresh(pA_prof)
-    db.refresh(pB_prof)
-    
-    patient_a_id = pA_prof.patient_id
-    patient_b_id = pB_prof.patient_id
-    doc_a_id = dA_user.user_id
+    db.refresh(pA_prof); db.refresh(pB_prof)
+    db.refresh(dA_prof); db.refresh(labA_prof)
+
+    pA_id = pA_prof.patient_id
+    pB_id = pB_prof.patient_id
+    dA_id = dA_user.user_id
+    dA_doc_id = dA_prof.doctor_id
+    labA_lab_id = labA_prof.lab_id
 
     # Give Doctor A ALL access to Patient A
-    for rt in [ResourceTypeEnum.PRESCRIPTIONS, ResourceTypeEnum.ALLERGIES, ResourceTypeEnum.VACCINATIONS, ResourceTypeEnum.VITALS, ResourceTypeEnum.LAB_REQUESTS, ResourceTypeEnum.LAB_REPORTS]:
-        cr = ConsentRequest(
-            patient_id=patient_a_id, grantee_id=doc_a_id, grantee_type=GranteeTypeEnum.DOCTOR,
+    for rt in [ResourceTypeEnum.PRESCRIPTIONS, ResourceTypeEnum.ALLERGIES, ResourceTypeEnum.VACCINATIONS,
+               ResourceTypeEnum.VITALS, ResourceTypeEnum.LAB_REQUESTS, ResourceTypeEnum.LAB_REPORTS]:
+        db.add(ConsentRequest(
+            patient_id=pA_id, grantee_id=dA_id, grantee_type=GranteeTypeEnum.DOCTOR,
             resource_type=rt, permission=PermissionEnum.BOTH, status=ConsentStatusEnum.ACTIVE,
             expires_at=datetime.utcnow() + timedelta(days=1)
+        ))
+    db.commit()
+
+    def seed_resources(pid, patient_user):
+        # Prescription
+        rx = Prescription(patient_id=pid, doctor_id=dA_doc_id, status="ACTIVE", digital_signature="ed25519:dummy")
+        db.add(rx); db.flush()
+        rx.diagnosis_encrypted = encrypt("dx", f"cryptcare:v2|prescriptions|{rx.prescription_id}|diagnosis_encrypted|{pid}")
+
+        # Lab request
+        lreq = LabTestRequest(patient_id=pid, assigned_lab_id=labA_lab_id,
+                              doctor_id=dA_doc_id, test_name="CBC",
+                              status=LabRequestStatusEnum.REQUESTED)
+        db.add(lreq); db.flush()
+
+        # Consent (PENDING so patient can approve/reject/revoke)
+        cons = ConsentRequest(
+            patient_id=pid, grantee_id=dA_id, grantee_type=GranteeTypeEnum.DOCTOR,
+            resource_type=ResourceTypeEnum.PRESCRIPTIONS, permission=PermissionEnum.READ,
+            status=ConsentStatusEnum.PENDING
         )
-        db.add(cr)
-    db.commit()
+        db.add(cons); db.flush()
 
-    # Pre-seed some target resources for Patient B (to test read-IDOR)
-    rx_b = Prescription(patient_id=patient_b_id, doctor_id=dA_prof.doctor_id, status="ACTIVE", digital_signature="ed25519:dummy")
-    db.add(rx_b)
-    db.flush()
-    rx_b.diagnosis_encrypted = encrypt("dx", f"cryptcare:v2|prescriptions|{rx_b.prescription_id}|diagnosis_encrypted|{rx_b.patient_id}")
-    db.commit()
+        # Fraud alert
+        fraud = FraudAlert(patient_id=pid, category=FraudAlertCategoryEnum.DOCTOR_SHOPPING,
+                           severity=SeverityEnum.MILD, status=FraudAlertStatusEnum.OPEN)
+        db.add(fraud); db.flush()
 
-    # Pre-seed some target resources for Patient A
-    rx_a = Prescription(patient_id=patient_a_id, doctor_id=dA_prof.doctor_id, status="ACTIVE", digital_signature="ed25519:dummy")
-    db.add(rx_a)
-    db.flush()
-    rx_a.diagnosis_encrypted = encrypt("dx", f"cryptcare:v2|prescriptions|{rx_a.prescription_id}|diagnosis_encrypted|{rx_a.patient_id}")
-    db.commit()
-    
-    return {
-        "pA_id": patient_a_id,
-        "pB_id": patient_b_id,
-        "pA_token": create_access_token(pA_user.user_id, "PATIENT", []),
-        "pB_token": create_access_token(pB_user.user_id, "PATIENT", []),
-        "dA_token": create_access_token(doc_a_id, "DOCTOR", []),
-        "rx_a_id": rx_a.prescription_id,
-        "rx_b_id": rx_b.prescription_id,
+        # Blood request
+        breq = BloodRequest(patient_id=pid, requested_by=dA_id, blood_group="O+",
+                            component=BloodComponentEnum.WHOLE_BLOOD, units_needed=1,
+                            status=BloodRequestStatusEnum.PENDING,
+                            urgency=BloodRequestUrgencyEnum.ROUTINE)
+        db.add(breq); db.flush()
+
+        # Insurance claim
+        insA_id = db.query(InsurerProfile).filter_by(user_id=insA_user.user_id).first().insurer_id
+        claim = InsuranceClaim(patient_id=pid, insurer_id=insA_id,
+                               resource_type="prescription", resource_id=rx.prescription_id,
+                               amount=100.0, status=ClaimStatusEnum.PENDING)
+        db.add(claim); db.flush()
+
+        # Notification
+        notif = Notification(recipient_id=patient_user.user_id,
+                             type=NotificationTypeEnum.PRESCRIPTION, message="test")
+        db.add(notif); db.flush()
+
+        # Lab report
+        from app.models.vault import LabReport
+        lrep = LabReport(lab_test_request_id=lreq.request_id, patient_id=pid,
+                         uploaded_by=labA_user.user_id, file_size_bytes=1000,
+                         file_path_encrypted=encrypt("/tmp/x"),
+                         original_filename_encrypted=encrypt("x.pdf"),
+                         report_summary_encrypted=encrypt("ok"))
+        db.add(lrep); db.flush()
+
+        db.commit()
+        return {
+            "prescription": rx.prescription_id,
+            "lab_request": lreq.request_id,
+            "lab_report": lrep.report_id,
+            "consent": cons.consent_id,
+            "fraud_alert": fraud.alert_id,
+            "blood_request": breq.request_id,
+            "insurance_claim": claim.claim_id,
+            "notification": notif.notification_id,
+        }
+
+    resA = seed_resources(pA_id, pA_user)
+    resB = seed_resources(pB_id, pB_user)
+
+    data = {
+        "PATIENT_A_id": pA_id,   "PATIENT_B_id": pB_id,
+        "PATIENT_A_token":    create_access_token(pA_user.user_id, "PATIENT", []),
+        "PATIENT_B_token":    create_access_token(pB_user.user_id, "PATIENT", []),
+        "DOCTOR_A_token":     create_access_token(dA_user.user_id, "DOCTOR", []),
+        "LAB_A_token":        create_access_token(labA_user.user_id, "LAB", []),
+        "PHARMACIST_A_token": create_access_token(pharmA_user.user_id, "PHARMACIST", []),
+        "BLOOD_BANK_A_token": create_access_token(bbA_user.user_id, "BLOOD_BANK", []),
+        "INSURER_A_token":    create_access_token(insA_user.user_id, "INSURER", []),
+        "ADMIN_A_token":      create_access_token(adminA_user.user_id, "ADMIN", []),
     }
+    for k, v in resA.items():
+        data[f"{k}_A_id"] = v
+    for k, v in resB.items():
+        data[f"{k}_B_id"] = v
+    return data
 
 
 # Format: (method, endpoint_template, payload_template, role, resource_type)

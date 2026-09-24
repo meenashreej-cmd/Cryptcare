@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.core.rbac import CurrentUser, get_current_user, require_role
@@ -13,6 +13,7 @@ router = APIRouter()
 @router.post("/verify-qr", response_model=QRVerifyResponse)
 def verify_qr(
     payload: QRVerifyRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(require_role(RoleEnum.PHARMACIST.value)),
 ):
@@ -21,13 +22,15 @@ def verify_qr(
     Restricted to PHARMACIST role. The signature must verify — an invalid/tampered
     QR is rejected outright rather than returned with a warning (see pharmacy_service).
     """
-    return verify_prescription_qr(db, current_user, payload)
+    client_ip = request.client.host if request.client else "unknown"
+    return verify_prescription_qr(db, current_user, payload, ip_address=client_ip)
 
 
 @router.post("/{prescription_id}/dispense", response_model=DispenseResponse)
 def dispense(
     prescription_id: str,
     payload: DispenseRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(require_role(RoleEnum.PHARMACIST.value)),
 ):
@@ -37,4 +40,5 @@ def dispense(
     verify-qr so the signature can be independently re-checked immediately
     before dispensing (status alone is no longer sufficient).
     """
-    return dispense_prescription(db, current_user, prescription_id, payload.qr_payload)
+    client_ip = request.client.host if request.client else "unknown"
+    return dispense_prescription(db, current_user, prescription_id, payload.qr_payload, ip_address=client_ip)

@@ -1,12 +1,34 @@
 from datetime import date
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from app.core.input_validation import HealthcareValidators
 
 
 class EmergencyContactUpdateRequest(BaseModel):
     blood_group: str | None = Field(None, max_length=5)
     emergency_contact_name: str | None = Field(None, max_length=150)
     emergency_contact_phone: str | None = Field(None, max_length=20)
+
+    @field_validator("blood_group")
+    @classmethod
+    def validate_blood_group_format(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return HealthcareValidators.validate_blood_group(v)
+
+    @field_validator("emergency_contact_name")
+    @classmethod
+    def validate_contact_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return HealthcareValidators.validate_person_name(v)
+
+    @field_validator("emergency_contact_phone")
+    @classmethod
+    def validate_contact_phone(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return HealthcareValidators.validate_phone(v)
 
 
 class EmergencyQRStatusResponse(BaseModel):

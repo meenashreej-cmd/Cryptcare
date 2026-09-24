@@ -23,20 +23,14 @@ from app.schemas.nursing import VitalSignCreateRequest
 from app.services.access_control import check_vault_access
 
 
-def _write_access_log(
-    db: Session,
-    user_id: str,
-    resource_id: str | None,
-    action: AccessActionEnum,
-    patient_id: str | None = None,
-) -> None:
-    db.add(AccessLog(
-        user_id=user_id,
-        patient_id=patient_id,
-        resource_type="vitals",
-        resource_id=resource_id,
-        action=action,
-    ))
+from app.core.audit import write_access_log as _write_access_log_shared
+
+
+def _write_access_log(db, user_id, resource_id, action, patient_id=None):
+    return _write_access_log_shared(
+        db, user_id=user_id, resource_type="vitals",
+        action=action, resource_id=resource_id, patient_id=patient_id,
+    )
 
 
 def _to_response_dict(row: VitalSign) -> dict:
@@ -158,7 +152,7 @@ def assign_nurse(db: Session, current_user: CurrentUser, payload: NurseAssignmen
     db.add(row)
     db.flush()
     
-    _write_access_log(db, current_user.id, row.consent_id, AccessActionEnum.CONSENT_REQUESTED, patient_id=payload.patient_id)
+    _write_access_log(db, current_user.id, row.consent_id, AccessActionEnum.NURSE_ASSIGNED, patient_id=payload.patient_id)
     
     from app.services import notification_service
     from app.models.notification import NotificationTypeEnum

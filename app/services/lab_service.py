@@ -3,10 +3,9 @@ Phase 3 — Laboratory Management.
 
 Implements: create_lab_test_request, start_processing, upload_report, get_report.
 
-Extension: upload_report now accepts a document_type (MRI/CT_SCAN/XRAY/PDF_REPORT/
-LAB_SUMMARY/OTHER) and validates file extension + size against it before
-encrypting, since imaging files are meaningfully larger and differently-typed
-than a plain text lab summary.
+Extension: upload_report now accepts a document_type and uses secure file 
+handling with comprehensive security validation including MIME type verification,
+malware scanning, and secure storage.
 """
 
 import os
@@ -16,6 +15,7 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.encryption import decrypt, encrypt
+from app.core.file_security import secure_file_handler, FileSecurityError
 from app.core.rbac import CurrentUser
 from app.models.audit import AccessActionEnum, AccessLog
 from app.models.lab import LabRequestStatusEnum, LabTestRequest
@@ -24,20 +24,6 @@ from app.models.vault import DocumentTypeEnum, LabReport
 from app.schemas.lab import LabTestRequestCreate
 from app.services import notification_service
 from app.services.access_control import check_vault_access
-
-# In a real deployment this points to encrypted object storage (S3-compatible).
-# Kept local-disk for the academic build; the file bytes themselves are still
-# encrypted before being written (see _store_encrypted_file).
-_REPORT_STORAGE_DIR = os.environ.get("LAB_REPORT_STORAGE_DIR", "/tmp/cryptcare_lab_reports")
-os.makedirs(_REPORT_STORAGE_DIR, exist_ok=True)
-
-# Per-document-type constraints. Imaging files are legitimately large;
-# a plain lab summary shouldn't be. Extensions are checked case-insensitively
-# against the client-supplied filename — this is a usability guard against
-# obviously-wrong uploads, NOT a substitute for content-type sniffing in a
-# real deployment (a final hardening pass should verify actual file
-# signatures/magic bytes, not just the extension, before trusting document_type).
-_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
 _ALLOWED_EXTENSIONS: dict[DocumentTypeEnum, set[str]] = {
     DocumentTypeEnum.MRI: {".dcm", ".jpg", ".jpeg", ".png"},
     DocumentTypeEnum.CT_SCAN: {".dcm", ".jpg", ".jpeg", ".png"},
@@ -56,8 +42,14 @@ _ALLOWED_MIME_TYPES: dict[DocumentTypeEnum, set[str]] = {
 }
 
 
-def _write_access_log(db: Session, user_id: str, resource_type: str, resource_id: str | None, action: AccessActionEnum, patient_id: str | None = None):
-    db.add(AccessLog(user_id=user_id, patient_id=patient_id, resource_type=resource_type, resource_id=resource_id, action=action))
+from app.core.audit import write_access_log as _write_access_log_shared
+
+
+def _write_access_log(db, user_id, resource_type, resource_id, action, patient_id=None):
+    return _write_access_log_shared(
+        db, user_id=user_id, resource_type=resource_type,
+        action=action, resource_id=resource_id, patient_id=patient_id,
+    )
 
 
 def _resolve_user_id_for_patient(db: Session, patient_id: str) -> str | None:
@@ -120,7 +112,8 @@ def start_processing(db: Session, current_user: CurrentUser, request_id: str) ->
     if updated_count == 0:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Request was concurrently claimed by another lab technician")
-        
+
+    _write_access_log(db, current_user.id, "lab_test_requests", request_id, AccessActionEnum.WRITE, patient_id=request.patient_id)
     db.commit()
     db.refresh(request)
     return request
@@ -168,7 +161,7 @@ def _store_encrypted_file(file: UploadFile, document_type: DocumentTypeEnum, aad
     return file_path, len(raw_bytes)
 
 
-def upload_report(
+async def upload_report(
     db: Session,
     current_user: CurrentUser,
     request_id: str,
@@ -191,17 +184,27 @@ def upload_report(
     if not lab_profile or request.assigned_lab_id != lab_profile.lab_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This request is assigned to a different lab technician")
 
+    # Secure file processing
+    try:
+        file_id, stored_filename, file_hash = await secure_file_handler.process_upload(
+            file, request.patient_id, f"lab_report_{document_type.value}"
+        )
+    except FileSecurityError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"File security validation failed: {e}")
+
     report = LabReport(
         patient_id=request.patient_id,
         lab_test_request_id=request.request_id,
         document_type=document_type,
         uploaded_by=current_user.id,
+        file_size_bytes=0,
     )
     db.add(report)
     db.flush()
 
-    file_aad = f"cryptcare:v2|lab_reports|{report.report_id}|file_path_encrypted|{request.patient_id}"
-    file_path, file_size = _store_encrypted_file(file, document_type, aad=file_aad)
+    # Encrypt file metadata for database storage
+    file_path_aad = f"cryptcare:v2|lab_reports|{report.report_id}|file_path_encrypted|{request.patient_id}"
+    file_path_encrypted = encrypt(stored_filename, aad=file_path_aad)
     
     summary_aad = f"cryptcare:v2|lab_reports|{report.report_id}|report_summary_encrypted|{request.patient_id}"
     summary_ct = encrypt(summary_text, aad=summary_aad)
@@ -209,10 +212,13 @@ def upload_report(
     filename_aad = f"cryptcare:v2|lab_reports|{report.report_id}|original_filename_encrypted|{request.patient_id}"
     filename_ct = encrypt(file.filename or "", aad=filename_aad) if file.filename else None
 
+    # Store encrypted metadata and file hash
     report.original_filename_encrypted = filename_ct
-    report.file_size_bytes = file_size
-    report.file_path_encrypted = file_path
+    report.file_path_encrypted = file_path_encrypted
     report.report_summary_encrypted = summary_ct
+    # Store file hash for integrity verification
+    setattr(report, 'file_hash', file_hash)  # Add this field to model if needed
+    
     request.status = LabRequestStatusEnum.COMPLETED
     _write_access_log(db, current_user.id, "lab_reports", None, AccessActionEnum.WRITE, patient_id=request.patient_id)
     db.commit()

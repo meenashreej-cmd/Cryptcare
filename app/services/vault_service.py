@@ -12,7 +12,7 @@ from app.core.encryption import decrypt, encrypt
 from app.core.qr import build_prescription_qr_payload, generate_qr_png
 from app.core.rbac import CurrentUser
 from app.core.signing import canonical_prescription_content, sign_prescription
-from app.models.audit import AccessActionEnum, AccessLog
+from app.models.audit import AccessActionEnum
 from app.models.notification import NotificationTypeEnum
 from app.models.vault import Allergy, Prescription, PrescriptionItem, Vaccination
 from app.schemas.vault import AllergyCreateRequest, PrescriptionCreateRequest, VaccinationCreateRequest
@@ -20,8 +20,15 @@ from app.services import clinical_safety_service, fraud_service, notification_se
 from app.services.access_control import check_vault_access
 
 
-def _write_access_log(db: Session, user_id: str, resource_type: str, resource_id: str | None, action: AccessActionEnum, patient_id: str | None = None):
-    db.add(AccessLog(user_id=user_id, patient_id=patient_id, resource_type=resource_type, resource_id=resource_id, action=action))
+from app.core.audit import write_access_log as _write_access_log_shared
+
+
+def _write_access_log(db, user_id, resource_type, resource_id, action, patient_id=None, ip_address=None):
+    return _write_access_log_shared(
+        db, user_id=user_id, resource_type=resource_type,
+        action=action, resource_id=resource_id,
+        patient_id=patient_id, ip_address=ip_address,
+    )
 
 
 def create_prescription(db: Session, current_user: CurrentUser, payload: PrescriptionCreateRequest) -> tuple[Prescription, dict]:
@@ -60,7 +67,7 @@ def create_prescription(db: Session, current_user: CurrentUser, payload: Prescri
     prescription.diagnosis_encrypted = encrypt(payload.diagnosis, diagnosis_aad)
     prescription.notes_encrypted = encrypt(payload.notes or "", notes_aad)
 
-    canonical = canonical_prescription_content(payload.diagnosis, payload.notes or "", items_as_dicts)
+    canonical = canonical_prescription_content(payload.diagnosis, payload.notes or "", items_as_dicts, doctor_id=doctor_profile.doctor_id)
     signature = sign_prescription(current_user.id, canonical)
     prescription.digital_signature = signature
 
@@ -159,19 +166,11 @@ def get_prescriptions(db: Session, current_user: CurrentUser, patient_id: str) -
         row.diagnosis_encrypted = decrypt(row.diagnosis_encrypted, diagnosis_aad) if row.diagnosis_encrypted else ""
         row.notes_encrypted = decrypt(row.notes_encrypted, notes_aad) if row.notes_encrypted else ""
         
-        canonical = canonical_prescription_content(row.diagnosis_encrypted, row.notes_encrypted, items_as_dicts)
+        canonical = canonical_prescription_content(row.diagnosis_encrypted, row.notes_encrypted, items_as_dicts, doctor_id=row.doctor_id)
         is_valid = verify_prescription_signature(row.doctor_id, canonical, row.digital_signature)
         
         if not is_valid:
-            # Re-attach temporarily to create audit logs
-            db.add(AccessLog(
-                user_id=current_user.id,
-                action=AccessActionEnum.DENIED,
-                resource_type="PRESCRIPTION",
-                resource_id=row.prescription_id,
-                patient_id=row.patient_id,
-                ip_address="127.0.0.1",
-            ))
+            _write_access_log(db, current_user.id, "PRESCRIPTION", row.prescription_id, AccessActionEnum.DENIED, patient_id=row.patient_id)
             db.commit()
             fraud_service.detect_prescription_tampering(db, row.prescription_id, row.patient_id)
             raise HTTPException(
@@ -241,6 +240,8 @@ def add_vaccination(db: Session, current_user: CurrentUser, patient_id: str, pay
 
 def get_vaccinations(db: Session, current_user: CurrentUser, patient_id: str) -> list[Vaccination]:
     if not check_vault_access(db, current_user, patient_id, "vaccinations", "read"):
+        _write_access_log(db, current_user.id, "vaccinations", patient_id, AccessActionEnum.DENIED, patient_id=patient_id)
+        db.commit()
         raise HTTPException(status.HTTP_403_FORBIDDEN, "No active consent to read vaccinations for this patient")
 
     rows = db.query(Vaccination).filter(Vaccination.patient_id == patient_id).all()

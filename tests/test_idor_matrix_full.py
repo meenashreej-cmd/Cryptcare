@@ -66,7 +66,7 @@ def full_idor_data(db):
         db.flush()
         rx.diagnosis_encrypted = encrypt("dx", f"cryptcare:v2|prescriptions|{rx.prescription_id}|diagnosis_encrypted|{pid}")
         
-        lreq = LabTestRequest(patient_id=pid, assigned_lab_id=labA_id, doctor_id=docA_prof, test_name="x", status=LabStatusEnum.PENDING)
+        lreq = LabTestRequest(patient_id=pid, assigned_lab_id=labA_id, doctor_id=docA_prof, test_name="x", status=LabStatusEnum.REQUESTED)
         db.add(lreq)
         db.flush()
         
@@ -91,7 +91,7 @@ def full_idor_data(db):
         db.add(claim)
         db.flush()
         
-        notif = Notification(recipient_id=pA.user_id if pid == pA_id else pB.user_id, type=NotificationTypeEnum.SYSTEM, message="x")
+        notif = Notification(recipient_id=pA.user_id if pid == pA_id else pB.user_id, type=NotificationTypeEnum.PRESCRIPTION, message="x")
         db.add(notif)
         db.flush()
 

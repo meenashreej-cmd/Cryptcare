@@ -18,6 +18,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.rbac import CurrentUser
+from app.core.audit import write_access_log as _write_audit_log
 from app.models.audit import AccessActionEnum, AccessLog
 from app.models.consent import ConsentRequest
 from app.models.fraud import FraudAlert, FraudAlertCategoryEnum, FraudAlertStatusEnum
@@ -292,6 +293,12 @@ def review_alert(db: Session, current_user: CurrentUser, alert_id: str, new_stat
     alert.status = new_status
     alert.reviewed_by = current_user.id
     alert.reviewed_at = datetime.utcnow()
+
+    _write_audit_log(
+        db, user_id=current_user.id, resource_type="fraud_alerts",
+        action=AccessActionEnum.WRITE, resource_id=alert.alert_id,
+        patient_id=alert.patient_id,
+    )
     db.commit()
     db.refresh(alert)
     return alert

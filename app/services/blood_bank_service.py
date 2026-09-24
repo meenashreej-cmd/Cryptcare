@@ -81,8 +81,14 @@ def _compatible_donor_groups(recipient_group: str, component: BloodComponentEnum
     return {g for g in _RBC_COMPATIBLE_DONORS if g.startswith(recipient_abo)}
 
 
-def _write_access_log(db: Session, user_id: str, resource_id: str | None, action: AccessActionEnum, patient_id: str | None = None):
-    db.add(AccessLog(user_id=user_id, action=action, resource_type="blood_requests", resource_id=resource_id, patient_id=patient_id))
+from app.core.audit import write_access_log as _write_access_log_shared
+
+
+def _write_access_log(db, user_id, resource_id, action, patient_id=None):
+    return _write_access_log_shared(
+        db, user_id=user_id, resource_type="blood_requests",
+        action=action, resource_id=resource_id, patient_id=patient_id,
+    )
 
 
 def _expire_stale_units(db: Session) -> None:
@@ -118,6 +124,8 @@ def add_unit(db: Session, current_user: CurrentUser, payload: BloodUnitCreateReq
         expiry_date=payload.expiry_date,
     )
     db.add(unit)
+    db.flush()
+    _write_access_log(db, current_user.id, unit.unit_id, AccessActionEnum.WRITE)
     db.commit()
     db.refresh(unit)
     return unit
@@ -152,7 +160,14 @@ def create_blood_request(db: Session, current_user: CurrentUser, payload: BloodR
 
     patient_id = payload.patient_id
     if current_user.role == "PATIENT":
-        patient_id = current_user.id
+        # Resolve the patient_id from the PatientProfile — current_user.id
+        # is the user_id (users table PK), NOT the patient_id (patient_profiles PK).
+        # Using user_id here would silently store a wrong FK or violate the
+        # patient_profiles.patient_id FK constraint.
+        own_profile = db.query(PatientProfile).filter(PatientProfile.user_id == current_user.id).first()
+        if not own_profile:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No patient profile found for this account")
+        patient_id = own_profile.patient_id
     elif not patient_id:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "patient_id is required for doctors/nurses")
 

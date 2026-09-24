@@ -282,17 +282,37 @@ def seed_db():
         # ------------------------------------------------------------------ #
 
         def make_prescription(status, items_data, days_ago=0):
+            from app.core.signing import sign_prescription, canonical_prescription_content
+            diagnosis_text = "Hyperlipidemia — routine management"
+            notes_text = "Take with food. Monitor LFTs quarterly."
+
+            # Build items list for canonical content (before DB flush gives us the ID)
+            items_for_canonical = [
+                {"medicine_name": n, "dosage": d, "frequency": f, "duration_days": dur}
+                for n, d, f, dur in items_data
+            ]
+
+            # Create prescription row without signature first to get the ID
             rx = Prescription(
                 patient_id=pid,
                 doctor_id=doctor_profile.doctor_id,
-                diagnosis_encrypted=encrypt("Hyperlipidemia — routine management"),
-                notes_encrypted=encrypt("Take with food. Monitor LFTs quarterly."),
-                digital_signature="DEMO_SIG_" + str(days_ago),
                 status=status,
                 created_at=NOW - timedelta(days=days_ago),
+                digital_signature="pending",
             )
             db.add(rx)
-            db.flush()
+            db.flush()  # generates rx.prescription_id
+
+            # Now encrypt with AAD bound to the prescription ID
+            diagnosis_aad = f"cryptcare:v2|prescriptions|{rx.prescription_id}|diagnosis_encrypted|{pid}"
+            notes_aad     = f"cryptcare:v2|prescriptions|{rx.prescription_id}|notes_encrypted|{pid}"
+            rx.diagnosis_encrypted = encrypt(diagnosis_text, diagnosis_aad)
+            rx.notes_encrypted     = encrypt(notes_text,     notes_aad)
+
+            # Generate real Ed25519 signature over canonical content
+            canonical = canonical_prescription_content(diagnosis_text, notes_text, items_for_canonical)
+            rx.digital_signature = sign_prescription(doctor_profile.doctor_id, canonical)
+
             for name, dosage, freq, dur in items_data:
                 db.add(PrescriptionItem(
                     prescription_id=rx.prescription_id,

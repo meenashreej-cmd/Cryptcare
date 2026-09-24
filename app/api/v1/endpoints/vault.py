@@ -1,7 +1,25 @@
+"""
+Phase 2 — Cryptographic Health Vault.
+
+Route-level role guards added (Phase 2 Step 4 — deny-by-default):
+  - POST /prescriptions     → DOCTOR only
+  - GET  /prescriptions/qr  → DOCTOR, NURSE, PATIENT, PHARMACIST
+  - GET  /prescriptions     → DOCTOR, NURSE, PATIENT, PHARMACIST
+  - POST /allergies         → DOCTOR, NURSE, PATIENT
+  - GET  /allergies         → DOCTOR, NURSE, PATIENT
+  - POST /vaccinations      → DOCTOR, NURSE, PATIENT
+  - GET  /vaccinations      → DOCTOR, NURSE, PATIENT
+
+These route-level guards are an early HTTP-layer rejection that prevent
+roles such as INSURER or BLOOD_BANK from even reaching the service's
+consent-gate logic. The service layer still enforces ownership/consent
+independently — the two layers together form defence-in-depth.
+"""
+
 from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
-from app.core.rbac import CurrentUser, get_current_user
+from app.core.rbac import CurrentUser, require_role
 from app.db.session import get_db
 from app.schemas.vault import (
     AllergyCreateRequest,
@@ -15,12 +33,16 @@ from app.services import vault_service
 
 router = APIRouter(prefix="/vault", tags=["Phase 2 — Health Vault"])
 
+# Roles that have any legitimate reason to read/write vault data.
+_VAULT_READERS = ("DOCTOR", "NURSE", "PATIENT", "PHARMACIST")
+_VAULT_WRITERS = ("DOCTOR", "NURSE", "PATIENT")
+
 
 @router.post("/prescriptions", response_model=PrescriptionResponse, status_code=201)
 def create_prescription(
     payload: PrescriptionCreateRequest,
     db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_role("DOCTOR")),
 ):
     prescription, safety = vault_service.create_prescription(db, current_user, payload)
     return _to_prescription_response(prescription, safety)
@@ -30,7 +52,7 @@ def create_prescription(
 def get_prescription_qr(
     prescription_id: str,
     db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_role(*_VAULT_READERS)),
 ):
     """Returns a PNG QR code — a signed reference to this prescription, not its
     contents. Access-gated identically to reading the prescription itself."""
@@ -42,7 +64,7 @@ def get_prescription_qr(
 def list_prescriptions(
     patient_id: str,
     db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_role(*_VAULT_READERS)),
 ):
     rows = vault_service.get_prescriptions(db, current_user, patient_id)
     return [_to_prescription_response(r) for r in rows]
@@ -53,16 +75,13 @@ def _to_prescription_response(p, safety: dict | None = None) -> PrescriptionResp
     if safety and (
         safety["interactions"]["results"] or safety["duplicates"]["duplicates"] or safety["unmatched_drugs"]
     ):
-        # "blocking" is always False here — a blocking check raises before
-        # this function is ever reached — so it's dropped to avoid implying
-        # otherwise in a successful-creation response.
         safety_warnings = {k: v for k, v in safety.items() if k != "blocking"}
 
     return PrescriptionResponse(
         prescription_id=p.prescription_id,
         patient_id=p.patient_id,
         doctor_id=p.doctor_id,
-        diagnosis=p.diagnosis_encrypted,  # already decrypted upstream in the service layer
+        diagnosis=p.diagnosis_encrypted,
         notes=p.notes_encrypted,
         status=p.status,
         created_at=p.created_at,
@@ -85,7 +104,7 @@ def add_allergy(
     patient_id: str,
     payload: AllergyCreateRequest,
     db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_role(*_VAULT_WRITERS)),
 ):
     return vault_service.add_allergy(db, current_user, patient_id, payload)
 
@@ -94,7 +113,7 @@ def add_allergy(
 def list_allergies(
     patient_id: str,
     db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_role(*_VAULT_READERS)),
 ):
     return vault_service.get_allergies(db, current_user, patient_id)
 
@@ -104,7 +123,7 @@ def add_vaccination(
     patient_id: str,
     payload: VaccinationCreateRequest,
     db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_role(*_VAULT_WRITERS)),
 ):
     return vault_service.add_vaccination(db, current_user, patient_id, payload)
 
@@ -113,6 +132,6 @@ def add_vaccination(
 def list_vaccinations(
     patient_id: str,
     db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_role(*_VAULT_READERS)),
 ):
     return vault_service.get_vaccinations(db, current_user, patient_id)

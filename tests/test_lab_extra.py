@@ -24,7 +24,7 @@ def test_patient_cannot_upload_report(client, db):
     
     resp = client.post(f"/api/v1/lab/requests/{request_id}/report", data=data, files=files, headers=patient_headers)
     assert resp.status_code == 403
-    assert "Only lab staff can upload reports" in resp.json()["detail"]
+    assert "not permitted" in resp.json()["detail"] or "Only lab staff" in resp.json()["detail"]
 
 def test_lab_concurrent_claim(client, db):
     patient_id, patient_user_id, doctor_user_id, lab_user_id = setup_lab_environment(db)

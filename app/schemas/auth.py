@@ -4,6 +4,7 @@ from typing import Optional
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from app.models.user import RoleEnum, UserStatusEnum
+from app.core.input_validation import HealthcareValidators
 
 _PROFESSIONAL_ROLES = (
     RoleEnum.DOCTOR, RoleEnum.NURSE, RoleEnum.LAB,
@@ -30,9 +31,50 @@ class RegisterRequest(BaseModel):
     organization_name: Optional[str] = None
     department: Optional[str] = None  # Nurse-only, e.g. "ICU", "General Ward"
 
+    @field_validator("full_name")
+    @classmethod
+    def validate_full_name(cls, v: str) -> str:
+        return HealthcareValidators.validate_person_name(v)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone_number(cls, v: str) -> str:
+        return HealthcareValidators.validate_phone(v)
+
+    @field_validator("license_number")
+    @classmethod
+    def validate_license_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return HealthcareValidators.validate_medical_license(v)
+
+    @field_validator("blood_group")
+    @classmethod
+    def validate_blood_group_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return HealthcareValidators.validate_blood_group(v)
+
+    @field_validator("gender")
+    @classmethod
+    def validate_gender_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return HealthcareValidators.validate_no_injection(v.strip(), "gender")
+
+    @field_validator("specialization", "hospital_name", "organization_name", "department")
+    @classmethod
+    def validate_text_fields(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return HealthcareValidators.validate_medical_text(v, max_length=200)
+
     @field_validator("password")
     @classmethod
     def password_complexity(cls, v: str) -> str:
+        # First apply injection validation
+        HealthcareValidators.validate_no_injection(v, "password")
+        
         if not any(c.isdigit() for c in v):
             raise ValueError("Password must contain at least one digit")
         if not any(c.isupper() for c in v):

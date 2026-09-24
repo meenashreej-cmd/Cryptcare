@@ -1,15 +1,26 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.lab import LabRequestStatusEnum
 from app.models.vault import DocumentTypeEnum
+from app.core.input_validation import HealthcareValidators
 
 
 class LabTestRequestCreate(BaseModel):
     patient_id: str
     test_name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("patient_id")
+    @classmethod
+    def validate_patient_id(cls, v: str) -> str:
+        return HealthcareValidators.validate_patient_id(v)
+
+    @field_validator("test_name")
+    @classmethod
+    def validate_test_name(cls, v: str) -> str:
+        return HealthcareValidators.validate_medical_text(v, "test name", max_length=200)
 
 
 class LabTestRequestResponse(BaseModel):
