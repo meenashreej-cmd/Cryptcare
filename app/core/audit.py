@@ -28,6 +28,10 @@ from sqlalchemy.orm import Session
 from app.models.audit import AccessActionEnum, AccessLog, compute_entry_hash
 
 
+import uuid
+from sqlalchemy import insert, select, literal, exists
+from sqlalchemy.exc import SQLAlchemyError
+
 def write_access_log(
     db: Session,
     user_id: str | None,
@@ -38,44 +42,62 @@ def write_access_log(
     ip_address: str | None = None,
 ) -> AccessLog:
     """
-    Append a new AccessLog row chained to the most recent existing row.
-
-    The prev_hash is computed from the *last committed* row's fields — so
-    this function issues a lightweight SELECT MAX query to get that row
-    before building the new entry. In the common case (sequential writes
-    inside a request) this is a single indexed pk-order lookup.
-
-    If no prior row exists (genesis / first-ever entry) prev_hash is NULL.
+    Append a new AccessLog row chained to the most recent existing row,
+    using an atomic compare-and-set to prevent concurrent forks of the chain.
+    
+    This function will retry up to 5 times if a concurrent transaction
+    advances the chain before we do. If it succeeds, the new entry is 
+    immediately added to the session's transaction, requiring the caller 
+    to commit it.
     """
-    # Fetch the most recent committed row by insertion order (log_id is a
-    # UUID but we order by accessed_at + log_id for determinism).
-    last = (
-        db.query(AccessLog)
-        .order_by(AccessLog.accessed_at.desc(), AccessLog.log_id.desc())
-        .first()
-    )
-
-    prev_hash: str | None = None
-    if last is not None and last.accessed_at is not None:
-        # Use the already-committed timestamp so the hash is stable.
-        prev_hash = compute_entry_hash(
-            log_id=last.log_id,
-            user_id=last.user_id,
-            action=last.action.value,
-            resource_type=last.resource_type,
-            resource_id=last.resource_id,
-            patient_id=last.patient_id,
-            accessed_at=str(last.accessed_at),
+    max_retries = 5
+    for attempt in range(max_retries):
+        last = (
+            db.query(AccessLog)
+            .order_by(AccessLog.accessed_at.desc(), AccessLog.log_id.desc())
+            .first()
         )
 
-    entry = AccessLog(
-        user_id=user_id,
-        patient_id=patient_id,
-        resource_type=resource_type,
-        resource_id=resource_id,
-        action=action,
-        ip_address=ip_address,
-        prev_hash=prev_hash,
-    )
-    db.add(entry)
-    return entry
+        prev_hash: str | None = None
+        if last is not None and last.accessed_at is not None:
+            prev_hash = compute_entry_hash(
+                log_id=last.log_id,
+                user_id=last.user_id,
+                action=last.action.value,
+                resource_type=last.resource_type,
+                resource_id=last.resource_id,
+                patient_id=last.patient_id,
+                accessed_at=str(last.accessed_at),
+            )
+
+        new_log_id = str(uuid.uuid4())
+        
+        if prev_hash is None:
+            # Genesis condition: ensure no rows exist at all
+            condition = ~exists().where(AccessLog.log_id != None)
+        else:
+            # Normal condition: ensure no row has already appended to this prev_hash
+            condition = ~exists().where(AccessLog.prev_hash == prev_hash)
+
+        sel = select(
+            literal(new_log_id).label("log_id"),
+            literal(user_id).label("user_id"),
+            literal(patient_id).label("patient_id"),
+            literal(resource_type).label("resource_type"),
+            literal(resource_id).label("resource_id"),
+            literal(action.value).label("action"),
+            literal(ip_address).label("ip_address"),
+            literal(prev_hash).label("prev_hash")
+        ).where(condition)
+
+        stmt = insert(AccessLog).from_select(
+            ["log_id", "user_id", "patient_id", "resource_type", "resource_id", "action", "ip_address", "prev_hash"],
+            sel
+        )
+
+        res = db.execute(stmt)
+        if res.rowcount > 0:
+            # Successfully inserted. Fetch and return the ORM object so callers can use it.
+            return db.query(AccessLog).filter(AccessLog.log_id == new_log_id).one()
+
+    raise RuntimeError("Failed to write access log due to high concurrency. Hash chain advanced too rapidly.")

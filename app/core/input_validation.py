@@ -21,12 +21,12 @@ class HealthcareValidators:
     NPI_PATTERN = re.compile(r'^[0-9]{10}$')  # National Provider Identifier
     
     # Personal data patterns (prevent injection while allowing international names)
-    NAME_PATTERN = re.compile(r'^[a-zA-ZÀ-ÿ\s\'\-\.]{1,100}$')  # Names with accents, apostrophes
+    NAME_PATTERN = re.compile(r'^[a-zA-Z0-9\s\'\-\.\u0080-\U0010FFFF]{1,100}$')  # Names with full Unicode support, apostrophes, and digits
     PHONE_PATTERN = re.compile(r'^\+?[0-9\s\-\(\)\.]{10,20}$')  # International phone formats
     
     # Medical content patterns
-    ALLERGY_PATTERN = re.compile(r'^[a-zA-Z0-9\s\,\.\-\(\)\/]{1,200}$')  # Medical terminology
-    DIAGNOSIS_PATTERN = re.compile(r'^[a-zA-Z0-9\s\,\.\-\(\)\/\:]{1,500}$')  # ICD codes, descriptions
+    ALLERGY_PATTERN = re.compile(r'^[a-zA-Z0-9\s\,\.\-\(\)\/\u0080-\U0010FFFF]{1,200}$')  # Medical terminology
+    DIAGNOSIS_PATTERN = re.compile(r'^[a-zA-Z0-9\s\,\.\-\(\)\/\:\u0080-\U0010FFFF]{1,500}$')  # ICD codes, descriptions
     
     # Prevent common injection patterns
     INJECTION_PATTERNS = [
@@ -157,7 +157,7 @@ class HealthcareValidators:
             raise ValueError(f"{field_name} too long (max {max_length} characters)")
         
         # Allow medical terminology but prevent code injection
-        if not re.match(r'^[a-zA-Z0-9\s\,\.\-\(\)\/\:\+\%\&]{0,' + str(max_length) + '}$', value):
+        if not re.match(r'^[a-zA-Z0-9\s\,\.\-\(\)\/\:\+\%\&\u0080-\U0010FFFF]{0,' + str(max_length) + '}$', value):
             raise ValueError(f"{field_name} contains invalid characters")
         
         return value
@@ -220,7 +220,7 @@ class HealthcareValidators:
             raise ValueError("Emergency message too long (max 1000 characters)")
         
         # Allow essential emergency information
-        if not re.match(r'^[a-zA-Z0-9\s\,\.\-\(\)\/\:\+\%\&\!\?\'\"]{0,1000}$', value):
+        if not re.match(r'^[a-zA-Z0-9\s\,\.\-\(\)\/\:\+\%\&\!\?\'\"\u0080-\U0010FFFF]{0,1000}$', value):
             raise ValueError("Emergency message contains invalid characters")
         
         return value

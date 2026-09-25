@@ -89,7 +89,8 @@ class AccessLog(Base):
     resource_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     action: Mapped[AccessActionEnum] = mapped_column(Enum(AccessActionEnum), nullable=False)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
-    accessed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    from sqlalchemy.dialects.mysql import DATETIME as MySQL_DATETIME
+    accessed_at: Mapped[datetime] = mapped_column(MySQL_DATETIME(fsp=6), server_default=func.now(6))
     # Hash-chain: SHA-256 digest of the previous log entry's canonical fields.
     # NULL on the first (genesis) entry. Allows offline chain verification.
     prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)

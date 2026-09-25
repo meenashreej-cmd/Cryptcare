@@ -44,6 +44,7 @@ from app.models.blood_bank import (
 )
 from app.models.fraud import FraudAlert, FraudAlertCategoryEnum, FraudAlertStatusEnum
 from app.models.notification import Notification, NotificationTypeEnum
+from app.models.audit import AccessLog, AccessActionEnum
 
 NOW = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -200,7 +201,32 @@ def seed_db():
             "admin@example.com", "+919999999999",
             "K. Okafor", RoleEnum.ADMIN,
         )
-        admin_user.must_change_password = True
+        admin_user.must_change_password = False
+        db.flush()
+        
+        # Pending Doctor (for Admin verification)
+        pending_doctor = make_user(
+            "newdoctor@example.com", "+918888888888",
+            "Dr. Alice Smith", RoleEnum.DOCTOR,
+        )
+        db.add(DoctorProfile(
+            doctor_id=pending_doctor.user_id,
+            user_id=pending_doctor.user_id,
+            license_number="MCI-DOC-PENDING-001",
+            specialization="Neurology",
+            hospital_name="City General Hospital",
+            verified=False,
+        ))
+        db.flush()
+
+        from app.models.audit import AccessLog, AccessActionEnum
+        # Add some dummy audit logs for the admin dashboard
+        db.add_all([
+            AccessLog(user_id=patient_user.user_id, resource_type="prescriptions", action=AccessActionEnum.READ, accessed_at=NOW - timedelta(days=1)),
+            AccessLog(user_id=doctor_user.user_id, resource_type="prescriptions", action=AccessActionEnum.WRITE, accessed_at=NOW - timedelta(days=2)),
+            AccessLog(user_id=nurse_user.user_id, resource_type="vitals", action=AccessActionEnum.WRITE, accessed_at=NOW - timedelta(hours=5)),
+            AccessLog(user_id=lab_user.user_id, resource_type="lab_reports", action=AccessActionEnum.WRITE, accessed_at=NOW - timedelta(hours=2)),
+        ])
         db.flush()
 
         print("Users + profiles created.")
@@ -310,7 +336,7 @@ def seed_db():
             rx.notes_encrypted     = encrypt(notes_text,     notes_aad)
 
             # Generate real Ed25519 signature over canonical content
-            canonical = canonical_prescription_content(diagnosis_text, notes_text, items_for_canonical)
+            canonical = canonical_prescription_content(diagnosis_text, notes_text, items_for_canonical, doctor_id=doctor_profile.doctor_id)
             rx.digital_signature = sign_prescription(doctor_profile.doctor_id, canonical)
 
             for name, dosage, freq, dur in items_data:

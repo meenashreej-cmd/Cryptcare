@@ -73,6 +73,8 @@ api.interceptors.response.use(
       try {
         const { data } = await axios.post('/api/v1/auth/refresh', {
           refresh_token: refreshToken,
+        }, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
         });
         const newAccessToken = data.access_token;
         localStorage.setItem('access_token', newAccessToken);
@@ -109,8 +111,10 @@ export const authService = {
     const payload = { email, password };
     if (otp_code) payload.otp_code = otp_code;
     const res = await api.post('/auth/login', payload);
-    localStorage.setItem('access_token', res.data.access_token);
-    localStorage.setItem('refresh_token', res.data.refresh_token);
+    if (res.data.access_token) {
+      localStorage.setItem('access_token', res.data.access_token);
+      localStorage.setItem('refresh_token', res.data.refresh_token);
+    }
     return res.data;
   },
   getMe: async () => {
@@ -372,6 +376,10 @@ export const adminService = {
   },
   verifyLicense: async (userId, approve) => {
     const res = await api.put(`/auth/verify-license/${userId}?approve=${approve}`);
+    return res.data;
+  },
+  getAllUsers: async () => {
+    const res = await api.get('/admin/users');
     return res.data;
   },
 };

@@ -153,3 +153,4 @@ def on_startup():
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+

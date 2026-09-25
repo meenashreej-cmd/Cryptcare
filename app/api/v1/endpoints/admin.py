@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.rbac import CurrentUser, require_role
 from app.db.session import get_db
 from app.schemas.admin import PendingVerificationResponse
+from app.schemas.auth import UserProfileResponse
 from app.services import admin_service
 
 router = APIRouter(prefix="/admin", tags=["Hospital Admin"])
@@ -33,3 +34,15 @@ def get_pending_verifications(
     Returns safe metadata only (no encrypted fields).
     """
     return admin_service.get_pending_verifications(db, current_user)
+
+
+@router.get("/users", response_model=list[UserProfileResponse])
+def get_all_users(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_role("ADMIN")),
+):
+    """
+    List all users in the system - admin only.
+    Returns safe metadata only (no encrypted fields).
+    """
+    return admin_service.get_all_users(db, current_user)
