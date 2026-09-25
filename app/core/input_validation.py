@@ -59,13 +59,19 @@ class HealthcareValidators:
         if not isinstance(value, str):
             raise ValueError("License number must be a string")
         
-        value = value.strip().upper()
-        cls.validate_no_injection(value, "license number")
+        stripped = value.strip()
+        cls.validate_no_injection(stripped, "license number")
         
-        if not cls.LICENSE_PATTERN.match(value):
+        # Reject if it contains any lowercase letters — license numbers are uppercase
+        if any(c.islower() for c in stripped):
+            raise ValueError("License number must be uppercase (e.g., MD-12345)")
+        
+        upper = stripped.upper()
+        
+        if not cls.LICENSE_PATTERN.match(upper):
             raise ValueError("License number must be in format: PREFIX-NUMBER (e.g., MD-12345)")
         
-        return value
+        return upper
 
     @classmethod
     def validate_mrn(cls, value: str) -> str:

@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 import uuid
 
-from jose import JWTError, jwt
+import jwt as _pyjwt
+from jwt.exceptions import InvalidTokenError as JWTError  # noqa: F401 — re-exported for callers
 from passlib.context import CryptContext
 
 from app.core.config import settings
@@ -36,7 +37,7 @@ def _create_token(subject: str, role: str, permissions: list[str], expires_delta
         payload["purpose"] = purpose
     if token_type in ("preauth", "refresh"):
         payload["jti"] = str(uuid.uuid4())
-    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return _pyjwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
 def create_access_token(user_id: str, role: str, permissions: list[str]) -> str:
@@ -77,7 +78,12 @@ def decode_token(token: str) -> dict[str, Any]:
     - expired token
     - malformed token
     """
-    return jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    return _pyjwt.decode(
+        token,
+        settings.JWT_SECRET_KEY,
+        algorithms=[settings.JWT_ALGORITHM],
+        options={"require": ["sub", "exp", "iat", "type"]},
+    )
 
 
 class TokenError(Exception):
