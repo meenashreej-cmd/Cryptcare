@@ -88,6 +88,11 @@ class SecureFileUpload:
         if not filename:
             raise FileSecurityError("Filename cannot be empty")
         
+        # Reject inputs that CONTAIN traversal sequences before any normalization
+        # This catches ../../etc/passwd, ..\windows\system32, etc.
+        if ".." in filename:
+            raise FileSecurityError("Filename contains path traversal sequence (..)")
+
         # Remove path components (directory traversal protection)
         filename = os.path.basename(filename)
         
