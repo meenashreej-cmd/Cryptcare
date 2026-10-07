@@ -105,9 +105,12 @@ class RegisterResponse(BaseModel):
     # and only ever returned on this one response — scan it into an
     # authenticator app now; it cannot be retrieved again.
     mfa_provisioning_uri: Optional[str] = None
+    preauth_token: Optional[str] = None
+    dev_otp: Optional[str] = None
 
 
 class VerifyOtpRequest(BaseModel):
+    user_id: Optional[str] = None
     otp_code: str = Field(min_length=4, max_length=8)
 
 
@@ -124,6 +127,7 @@ class TokenResponse(BaseModel):
     requires_password_change: bool = False
     requires_mfa_enrollment: bool = False
     token_type: str = "bearer"
+    dev_otp: Optional[str] = None
 
 
 class RefreshRequest(BaseModel):
@@ -160,3 +164,19 @@ class ChangePasswordRequest(BaseModel):
 
 class ChangePasswordVoluntaryRequest(ChangePasswordRequest):
     current_password: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    reset_token: str
+    new_password: str = Field(min_length=10, max_length=128)
+    
+    @field_validator("new_password")
+    @classmethod
+    def password_complexity(cls, v: str) -> str:
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one digit")
+        if not any(c.isupper() for c in v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        return v

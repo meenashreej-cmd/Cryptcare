@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.rbac import CurrentUser, get_current_user, get_preauth_user_for, require_role
 from app.db.session import get_db
-from app.models.user import User
+from app.models.user import User, RoleEnum
 from app.schemas.auth import (
     LoginRequest,
     RefreshRequest,
@@ -16,6 +16,8 @@ from app.schemas.auth import (
     VerifyOtpRequest,
     ChangePasswordRequest,
     ChangePasswordVoluntaryRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
 )
 from app.services import auth_service
 from app.utils.network import get_client_ip
@@ -41,13 +43,21 @@ def set_refresh_cookie(response: Response, refresh_token: str):
 
 @router.post("/register", response_model=RegisterResponse, status_code=201)
 def register(payload: RegisterRequest, request: Request, db: Session = Depends(get_db)):
+    from app.core.security import create_preauth_token
     client_ip = get_client_ip(request)
     user, mfa_provisioning_uri, license_verified = auth_service.register_user(db, payload, client_ip)
+    preauth_token = create_preauth_token(user.user_id, user.role.value, [], purpose="otp_verification")
+    dev_otp = None
+    if settings.ENV in ("dev", "development") and not settings.SMTP_ENABLED:
+        from app.services.auth_service import _OTP_STORE
+        dev_otp = _OTP_STORE.get(user.user_id, {}).get("code")
     return RegisterResponse(
         user_id=user.user_id,
         status=user.status,
         license_verified=license_verified,
         mfa_provisioning_uri=mfa_provisioning_uri,
+        preauth_token=preauth_token,
+        dev_otp=dev_otp,
     )
 
 
@@ -56,10 +66,29 @@ def verify_otp(
     payload: VerifyOtpRequest,
     request: Request,
     db: Session = Depends(get_db),
-    preauth_user: dict = Depends(get_preauth_user_for("otp_verification")),
 ):
     client_ip = get_client_ip(request)
-    user = auth_service.verify_otp(db, preauth_user["sub"], preauth_user["jti"], payload.otp_code, client_ip)
+    auth_header = request.headers.get("Authorization")
+    user_id = None
+    jti = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+        try:
+            from app.core.security import verify_preauth_token
+            payload_data = verify_preauth_token(token, "otp_verification")
+            user_id = payload_data["sub"]
+            jti = payload_data["jti"]
+        except Exception:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired preauth token")
+
+    if not user_id and payload.user_id:
+        user_id = payload.user_id
+        jti = None
+
+    if not user_id:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Preauth token or user_id required")
+
+    user = auth_service.verify_otp(db, user_id, jti, payload.otp_code, client_ip)
     return user
 
 
@@ -146,6 +175,48 @@ def refresh(
     token_data = auth_service.refresh_access_token(db, refresh_token, client_ip)
     set_refresh_cookie(response, token_data["refresh_token"])
     return TokenResponse(access_token=token_data["access_token"])
+
+
+@router.post("/forgot-password")
+def forgot_password(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    client_ip = get_client_ip(request)
+    reset_token = auth_service.forgot_password(db, payload.email, client_ip)
+    resp = {"detail": "If an account with this email exists, a password reset link has been sent to your email"}
+    if settings.ENV in ("dev", "development") and not settings.SMTP_ENABLED and reset_token:
+        resp["reset_token"] = reset_token
+        resp["reset_link"] = f"{settings.FRONTEND_URL}/?token={reset_token}"
+    return resp
+
+
+@router.post("/reset-password")
+def reset_password(
+    payload: ResetPasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    client_ip = get_client_ip(request)
+    auth_service.reset_password(db, payload.reset_token, payload.new_password, client_ip)
+    return {"detail": "Password has been reset successfully"}
+
+
+@router.post("/resend-patient-otp")
+def resend_patient_otp(
+    request: Request,
+    db: Session = Depends(get_db),
+    preauth_user: dict = Depends(get_preauth_user_for("patient_login_otp")),
+):
+    """Resend OTP for patient login"""
+    client_ip = get_client_ip(request)
+    user = db.query(User).filter(User.user_id == preauth_user["sub"]).first()
+    if not user or user.role != RoleEnum.PATIENT:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only available for patient accounts")
+    
+    auth_service.send_patient_login_otp(db, user, client_ip)
+    return {"detail": "OTP resent successfully"}
 
 
 @router.post("/logout")

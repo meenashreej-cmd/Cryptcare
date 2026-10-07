@@ -3,6 +3,7 @@ import api, {
   authService, vaultService, consentService, nursingService,
   fraudService, insuranceService, auditService, notificationService,
   adminService, bloodBankService, labService, hospitalService,
+  appointmentService,
 } from "./api";
 import {
   ShieldCheck, ShieldAlert, Shield, Lock, Unlock, Fingerprint, KeyRound,
@@ -128,6 +129,7 @@ const NAV = {
   patient: [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
     { id: "vault", label: "Digital Health Vault", icon: FolderLock },
+    { id: "appointments", label: "My Appointments", icon: CalendarClock },
     { id: "prescriptions", label: "Prescription History", icon: FileText },
     { id: "allergies", label: "Allergy Records", icon: AlertTriangle },
     { id: "vaccinations", label: "Vaccinations", icon: ShieldCheck },
@@ -144,6 +146,7 @@ const NAV = {
   ],
   doctor: [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
+    { id: "appointments", label: "My Appointments", icon: CalendarClock },
     { id: "search", label: "Patient Search", icon: Search },
     { id: "prescribe", label: "Create Prescription", icon: FileSignature },
     { id: "clinical-ai", label: "AI Clinical Safety", icon: Sparkles },
@@ -456,10 +459,15 @@ const PatientOverview = ({ go, currentUser }) => {
   const { data: consentRaw } = useApi(() => consentService.getMyConsents(), [pid]);
   const { data: alertRaw } = useApi(() => fraudService.getAlerts(pid), [pid]);
   const { data: timelineRaw } = useApi(() => consentService.getTimeline(), [pid]);
+  const { data: appointmentData } = useApi(() => appointmentService.getUpcomingAppointments(7), [pid]);
+  const { data: appointmentStats } = useApi(() => appointmentService.getAppointmentStats(), [pid]);
+  
   const activeRx = (rxRaw || []).filter(r => r.status === "ACTIVE");
   const pendingConsents = (consentRaw?.consents || []).filter(c => c.status === "PENDING");
   const alerts = alertRaw?.alerts || [];
   const events = (timelineRaw?.events || []).slice(0, 3);
+  const upcomingAppointments = (appointmentData?.appointments || []).slice(0, 3);
+  
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -489,26 +497,26 @@ const PatientOverview = ({ go, currentUser }) => {
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard icon={FileText} label="Active Prescriptions" value={rxLoading ? "…" : activeRx.length} tone="teal" />
-        <StatCard icon={Inbox} label="Pending Consents" value={pendingConsents.length} sub="Awaiting approval" tone="blue" />
+        <StatCard icon={CalendarClock} label="Upcoming Appointments" value={appointmentStats?.upcoming_this_week ?? "…"} sub="This week" tone="blue" />
         <StatCard icon={ShieldAlert} label="Fraud Alerts" value={alerts.length} sub={`${alerts.filter(a => a.severity === "SEVERE").length} high severity`} tone="red" />
         <StatCard icon={History} label="Timeline Events" value={timelineRaw?.events?.length ?? "…"} tone="green" />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2">
           <div className="flex items-center justify-between mb-3">
-            <span className="font-semibold text-sm">Recent Activity</span>
-            <button className="text-xs font-semibold" style={{ color: "var(--teal-deep)" }} onClick={() => go("access-history")}>View all</button>
+            <span className="font-semibold text-sm">Upcoming Appointments</span>
+            <button className="text-xs font-semibold" style={{ color: "var(--teal-deep)" }} onClick={() => go("appointments")}>View all</button>
           </div>
           <div className="space-y-2.5">
-            {events.length === 0 && <p className="text-sm text-gray-400">No recent activity yet.</p>}
-            {events.map((e, i) => (
+            {upcomingAppointments.length === 0 && <p className="text-sm text-gray-400">No upcoming appointments.</p>}
+            {upcomingAppointments.map((apt, i) => (
               <div key={i} className="flex items-center gap-3 text-sm">
-                <div className="mv-glass p-2 rounded-lg"><Eye size={13} style={{ color: "var(--blue)" }} /></div>
+                <div className="mv-glass p-2 rounded-lg"><CalendarClock size={13} style={{ color: "var(--blue)" }} /></div>
                 <div className="flex-1">
-                  <span className="font-medium">{e.actor_name || e.actor_id || "System"}</span>{" "}
-                  <span style={{ color: "var(--text-dim)" }}>{e.action}</span>
+                  <span className="font-medium">{apt.title || "Appointment"}</span>{" "}
+                  <span style={{ color: "var(--text-dim)" }}>with {apt.doctor_name}</span>
                 </div>
-                <span className="text-xs" style={{ color: "var(--text-faint)" }}>{new Date(e.timestamp).toLocaleString()}</span>
+                <span className="text-xs" style={{ color: "var(--text-faint)" }}>{new Date(apt.scheduled_datetime).toLocaleString()}</span>
               </div>
             ))}
           </div>
@@ -3116,14 +3124,287 @@ const HospitalAdminOverview = ({ currentUser }) => {
 
 /* ---------------------------------------------------------------------- */
 
+const AppointmentsView = ({ currentUser }) => {
+  const { data: appointmentData, loading, mutate } = useApi(() => appointmentService.getAppointments(), []);
+  const { data: statsData } = useApi(() => appointmentService.getAppointmentStats(), []);
+  
+  const appointments = appointmentData?.appointments || [];
+  const stats = statsData || {};
+
+  const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({
+    patient_id: '',
+    doctor_id: '',
+    scheduled_datetime: '',
+    duration_minutes: '30',
+    appointment_type: 'CONSULTATION',
+    title: '',
+    description: '',
+    location: '',
+    is_virtual: false
+  });
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    setCreating(true);
+    try {
+      const appointmentData = {
+        ...form,
+        scheduled_datetime: new Date(form.scheduled_datetime).toISOString()
+      };
+      
+      if (currentUser.role === 'PATIENT') {
+        appointmentData.patient_id = currentUser.user_id;
+      } else if (currentUser.role === 'DOCTOR') {
+        appointmentData.doctor_id = currentUser.user_id;
+      }
+      
+      await appointmentService.createAppointment(appointmentData);
+      mutate();
+      setShowCreate(false);
+      setForm({
+        patient_id: '',
+        doctor_id: '',
+        scheduled_datetime: '',
+        duration_minutes: '30',
+        appointment_type: 'CONSULTATION',
+        title: '',
+        description: '',
+        location: '',
+        is_virtual: false
+      });
+    } catch (err) {
+      console.error("Failed to create appointment:", err);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'SCHEDULED': return 'blue';
+      case 'CONFIRMED': return 'green';
+      case 'IN_PROGRESS': return 'amber';
+      case 'COMPLETED': return 'teal';
+      case 'CANCELLED': return 'red';
+      default: return 'gray';
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <SectionHeader 
+        icon={CalendarClock} 
+        title="My Appointments" 
+        desc="Manage your scheduled appointments"
+        action={
+          <button className="mv-btn mv-btn-primary" onClick={() => setShowCreate(true)}>
+            <Plus size={14} /> New Appointment
+          </button>
+        }
+      />
+
+      {/* Statistics */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard icon={CalendarClock} label="Upcoming" value={stats.upcoming_this_week || 0} tone="blue" />
+        <StatCard icon={Check} label="Completed" value={stats.completed || 0} tone="green" />
+        <StatCard icon={Clock} label="Scheduled" value={stats.scheduled || 0} tone="amber" />
+        <StatCard icon={X} label="Cancelled" value={stats.cancelled || 0} tone="red" />
+      </div>
+
+      {/* Appointments List */}
+      <Card>
+        {loading ? (
+          <p className="text-center py-8 text-gray-400">Loading appointments...</p>
+        ) : appointments.length === 0 ? (
+          <p className="text-center py-8 text-gray-400">No appointments scheduled.</p>
+        ) : (
+          <table className="mv-table">
+            <thead>
+              <tr>
+                <th>Date & Time</th>
+                <th>With</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Location</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {appointments.map((apt) => (
+                <tr key={apt.appointment_id}>
+                  <td>
+                    <div className="text-sm font-medium">
+                      {new Date(apt.scheduled_datetime).toLocaleDateString()}
+                    </div>
+                    <div className="text-xs" style={{ color: "var(--text-dim)" }}>
+                      {new Date(apt.scheduled_datetime).toLocaleTimeString()}
+                    </div>
+                  </td>
+                  <td>
+                    {currentUser.role === 'PATIENT' ? apt.doctor_name : apt.patient_name}
+                  </td>
+                  <td>
+                    <Pill_ tone="teal">{apt.appointment_type}</Pill_>
+                  </td>
+                  <td>
+                    <Pill_ tone={getStatusColor(apt.status)}>{apt.status}</Pill_>
+                  </td>
+                  <td>
+                    {apt.is_virtual ? (
+                      <span className="text-blue-500">Virtual</span>
+                    ) : (
+                      apt.location || 'TBD'
+                    )}
+                  </td>
+                  <td>
+                    <button className="text-xs text-blue-500 hover:underline">
+                      View
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+
+      {/* Create Appointment Modal */}
+      {showCreate && (
+        <Modal title="Schedule Appointment" icon={CalendarClock} onClose={() => setShowCreate(false)} wide>
+          <form onSubmit={handleCreate} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Title</label>
+                <input
+                  className="mv-input mv-focusable"
+                  placeholder="Routine checkup"
+                  value={form.title}
+                  onChange={(e) => setForm(prev => ({ ...prev, title: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Type</label>
+                <select
+                  className="mv-input mv-focusable"
+                  value={form.appointment_type}
+                  onChange={(e) => setForm(prev => ({ ...prev, appointment_type: e.target.value }))}
+                >
+                  <option value="CONSULTATION">Consultation</option>
+                  <option value="FOLLOW_UP">Follow-up</option>
+                  <option value="ROUTINE_CHECK">Routine Check</option>
+                  <option value="PROCEDURE">Procedure</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Date & Time</label>
+                <input
+                  type="datetime-local"
+                  className="mv-input mv-focusable"
+                  value={form.scheduled_datetime}
+                  onChange={(e) => setForm(prev => ({ ...prev, scheduled_datetime: e.target.value }))}
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Duration (minutes)</label>
+                <select
+                  className="mv-input mv-focusable"
+                  value={form.duration_minutes}
+                  onChange={(e) => setForm(prev => ({ ...prev, duration_minutes: e.target.value }))}
+                >
+                  <option value="15">15 minutes</option>
+                  <option value="30">30 minutes</option>
+                  <option value="45">45 minutes</option>
+                  <option value="60">1 hour</option>
+                </select>
+              </div>
+            </div>
+
+            {currentUser.role === 'DOCTOR' && (
+              <div>
+                <label className="block text-sm font-medium mb-1">Patient ID</label>
+                <input
+                  className="mv-input mv-focusable"
+                  placeholder="Patient user ID"
+                  value={form.patient_id}
+                  onChange={(e) => setForm(prev => ({ ...prev, patient_id: e.target.value }))}
+                  required
+                />
+              </div>
+            )}
+
+            {currentUser.role === 'PATIENT' && (
+              <div>
+                <label className="block text-sm font-medium mb-1">Doctor ID</label>
+                <input
+                  className="mv-input mv-focusable"
+                  placeholder="Doctor user ID"
+                  value={form.doctor_id}
+                  onChange={(e) => setForm(prev => ({ ...prev, doctor_id: e.target.value }))}
+                  required
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Location</label>
+              <input
+                className="mv-input mv-focusable"
+                placeholder="Room 101, Clinic A"
+                value={form.location}
+                onChange={(e) => setForm(prev => ({ ...prev, location: e.target.value }))}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Description</label>
+              <textarea
+                className="mv-input mv-focusable"
+                rows={3}
+                placeholder="Additional notes..."
+                value={form.description}
+                onChange={(e) => setForm(prev => ({ ...prev, description: e.target.value }))}
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="virtual"
+                checked={form.is_virtual}
+                onChange={(e) => setForm(prev => ({ ...prev, is_virtual: e.target.checked }))}
+              />
+              <label htmlFor="virtual" className="text-sm">Virtual appointment</label>
+            </div>
+
+            <div className="flex gap-2 justify-end pt-4">
+              <button type="button" className="mv-btn mv-btn-ghost" onClick={() => setShowCreate(false)}>
+                Cancel
+              </button>
+              <button type="submit" className="mv-btn mv-btn-primary" disabled={creating}>
+                {creating ? 'Creating...' : 'Schedule Appointment'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
 const VIEWS = {
   patient: {
-    overview: PatientOverview, vault: VaultView, prescriptions: PrescriptionsView, medications: MedicationsView,
+    overview: PatientOverview, vault: VaultView, appointments: AppointmentsView, prescriptions: PrescriptionsView, medications: MedicationsView,
     allergies: AllergiesView, labs: LabsView, emergency: EmergencyInfoView, ai: AIAssistantView,
     vitals: VitalsHistoryView, "access-requests": AccessRequestsView, "active-consents": ActiveConsentsView, "access-history": AccessHistoryView, fraud: FraudAlertsView,
-    vaccinations: VaccinationsView, blood: PatientBloodRequestsView,
+    vaccinations: VaccinationsView, blood: PatientBloodRequestsView, claims: PatientClaimsView,
   },
-  doctor: { overview: DoctorOverview, search: PatientSearchView, prescribe: CreatePrescriptionView, "clinical-ai": ClinicalAIView, history: PatientHistoryView, "care-team": DoctorCareTeamView, blood: DoctorBloodRequestsView },
+  doctor: { overview: DoctorOverview, appointments: AppointmentsView, search: PatientSearchView, prescribe: CreatePrescriptionView, "clinical-ai": ClinicalAIView, history: PatientHistoryView, "care-team": DoctorCareTeamView, blood: DoctorBloodRequestsView },
   nurse: { overview: NurseOverview, meds: MedAdminView, vitals: VitalsManagementView },
   pharmacist: { overview: PharmacyOverview, verify: VerifyView, dispense: DispenseView, interactions: InteractionsView },
   insurer: { overview: InsuranceOverview, claims: ClaimsView, anomalies: AnomaliesView },
@@ -3209,6 +3490,8 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
   const [step, setStep] = useState("role");
   const [selectedRole, setRole] = useState(null);
   const [pendingUserId, setUid] = useState(null);
+  const [pendingPreauthToken, setPendingPreauthToken] = useState(null);
+  const [devOtp, setDevOtp] = useState(null);
   const [showMfaUri, setMfaUri] = useState(null);
   const [otpCode, setOtpCode] = useState("");
   const [error, setError] = useState("");
@@ -3276,6 +3559,11 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
 
       const data = await authService.register(payload);
       setUid(data.user_id);
+      if (data.preauth_token) setPendingPreauthToken(data.preauth_token);
+      if (data.dev_otp) {
+        setDevOtp(data.dev_otp);
+      }
+      setOtpCode("");
       if (data.mfa_provisioning_uri) setMfaUri(data.mfa_provisioning_uri);
       setStep("otp");
     } catch (err) {
@@ -3292,7 +3580,7 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
     setLoading(true);
     setError("");
     try {
-      await authService.verifyOtp(pendingUserId, otpCode.trim());
+      await authService.verifyOtp(pendingUserId, otpCode.trim(), pendingPreauthToken);
       onRegistered(form.email, form.password);
     } catch (err) {
       const msg = err?.response?.data?.detail;
@@ -3536,28 +3824,158 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otpCode, setOtpCode] = useState("");
-  const [mfaRequired, setMfaRequired] = useState(false);
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [infoMessage, setInfoMessage] = useState("");
+  const [needsOtp, setNeedsOtp] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotPasswordStep, setForgotPasswordStep] = useState("email"); // "email" | "reset" | "done"
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
+  const [resetToken, setResetToken] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotError, setForgotError] = useState("");
+  const [forgotSuccessMsg, setForgotSuccessMsg] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [canResendOtp, setCanResendOtp] = useState(true);
+  const [resendCooldown, setResendCooldown] = useState(0);
 
-  const handleSubmit = async (e) => {
+  // Check URL parameters for password reset token
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    if (token) {
+      setResetToken(token);
+      setForgotPasswordStep("reset");
+      setShowForgotPassword(true);
+    }
+  }, []);
+
+  // Cooldown timer for resend OTP
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
+      return () => clearTimeout(timer);
+    } else {
+      setCanResendOtp(true);
+    }
+  }, [resendCooldown]);
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    setForgotLoading(true);
+    setForgotError("");
+    try {
+      await authService.forgotPassword(forgotPasswordEmail.trim());
+      setForgotSuccessMsg(`A 6-digit reset code has been sent to ${forgotPasswordEmail.trim()}. Check your email inbox and enter the code below.`);
+      setForgotPasswordStep("reset");
+    } catch (err) {
+      setForgotError(err?.response?.data?.detail || "Failed to send reset code");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    if (!resetToken.trim()) {
+      setForgotError("Please enter the 6-digit reset code or token from your email");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setForgotError("Password must be at least 8 characters long");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setForgotError("Passwords do not match");
+      return;
+    }
+    setForgotLoading(true);
+    setForgotError("");
+    try {
+      await authService.resetPassword(resetToken.trim(), newPassword);
+      setForgotSuccessMsg("Your password has been reset successfully! You can now log in.");
+      setForgotPasswordStep("done");
+      setPassword(newPassword);
+      if (forgotPasswordEmail) setEmail(forgotPasswordEmail);
+    } catch (err) {
+      setForgotError(err?.response?.data?.detail || "Failed to reset password. Code or link may be invalid/expired.");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const closeForgotPasswordModal = () => {
+    setShowForgotPassword(false);
+    setForgotPasswordStep("email");
+    setForgotPasswordEmail("");
+    setResetToken("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setForgotError("");
+    setForgotSuccessMsg("");
+  };
+
+  const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError("");
+    setInfoMessage("");
+    
     try {
-      await authService.login(email, password, mfaRequired ? otpCode : undefined);
-      const me = await authService.getMe();
-      onLogin(me);
-    } catch (err) {
-      if (err.response?.data?.detail === "MFA code required") {
-        setMfaRequired(true);
+      const response = await authService.login(email, password, otpCode);
+      
+      if (response.requires_otp) {
+        setNeedsOtp(true);
+        setOtpCode("");
         setError("");
+        setInfoMessage("Verification code sent to your email. Please check your inbox and enter the 6-digit code below.");
       } else {
-        setError(err.response?.data?.detail || "Invalid credentials or server unavailable.");
+        const me = await authService.getMe();
+        onLogin(me);
+      }
+    } catch (err) {
+      setInfoMessage("");
+      if (err?.response?.data?.detail === "MFA code required") {
+        setNeedsOtp(true);
+        setOtpCode("");
+        setError("Enter your 6-digit authenticator code");
+      } else {
+        setError(err?.response?.data?.detail || "Login failed");
       }
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleResendOtp = async () => {
+    if (!canResendOtp) return;
+    setLoading(true);
+    setError("");
+    setInfoMessage("");
+    try {
+      const response = await authService.login(email, password);
+      setOtpCode("");
+      setError("");
+      setInfoMessage("A new verification code has been sent to your email.");
+      setCanResendOtp(false);
+      setResendCooldown(60);
+    } catch (err) {
+      setError(err?.response?.data?.detail || "Failed to resend code");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fillDemoAccount = (demoEmail) => {
+    setEmail(demoEmail);
+    setPassword("Password123");
+    setNeedsOtp(false);
+    setOtpCode("");
+    setError("");
+    setInfoMessage("");
   };
 
   return (
@@ -3577,34 +3995,336 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
             Account verified! You can now sign in.
           </div>
         )}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {!mfaRequired ? (
-            <>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Email Address</label>
-                <input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Password</label>
-                <input type="password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors" />
-              </div>
-            </>
-          ) : (
+
+        {infoMessage && (
+          <div className="flex items-center gap-2 p-3 mb-4 rounded-xl bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800 text-sm text-teal-700 dark:text-teal-300">
+            <Inbox size={16} className="shrink-0" />
+            <span>{infoMessage}</span>
+          </div>
+        )}
+
+        {error && (
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3 mb-4">
+            <p className="text-red-700 dark:text-red-400 text-sm">{error}</p>
+          </div>
+        )}
+
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Email Address</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Password</label>
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full p-3 pr-12 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-[#0FB6AA] transition"
+              >
+                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
+          </div>
+
+          {needsOtp && (
             <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Authenticator Code (TOTP)</label>
-              <input type="text" value={otpCode} onChange={e => setOtpCode(e.target.value)} required placeholder="6-digit code" className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors text-center tracking-[0.5em] font-mono text-lg" maxLength={6} />
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Verification Code</label>
+              <input
+                type="text"
+                value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors text-center text-lg tracking-widest font-mono"
+                placeholder="000000"
+                maxLength={6}
+                required
+              />
+              <div className="flex justify-between items-center mt-2">
+                <p className="text-xs text-gray-500">Check your email or server log for the 6-digit code</p>
+                <button
+                  type="button"
+                  onClick={handleResendOtp}
+                  disabled={!canResendOtp}
+                  className="text-xs text-[#0FB6AA] hover:underline disabled:text-gray-400"
+                >
+                  {canResendOtp ? 'Resend Code' : `Resend in ${resendCooldown}s`}
+                </button>
+              </div>
             </div>
           )}
-          {error && <div className="text-sm text-red-500 p-2 bg-red-50 dark:bg-red-900/20 rounded-lg">{error}</div>}
-          <button type="submit" disabled={loading} className="w-full py-3 rounded-xl font-bold text-white shadow-lg disabled:opacity-70" style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}>
-            {loading ? "Authenticating..." : mfaRequired ? "Verify Code" : "Sign In securely"}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 rounded-xl font-bold text-white shadow-lg disabled:opacity-70 transition hover:brightness-105"
+            style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}
+          >
+            {loading ? "Signing in..." : "Sign In securely"}
           </button>
         </form>
-        <p className="text-center text-sm text-gray-500 mt-4">
+
+        {/* Demo Accounts Quick Selector */}
+        <div className="mt-5 pt-4 border-t border-gray-200/60 dark:border-gray-700/60">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2.5 text-center">
+            Demo Accounts (Password: Password123)
+          </p>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <button
+              type="button"
+              onClick={() => fillDemoAccount("doctor@example.com")}
+              className="p-2 rounded-lg bg-teal-50 dark:bg-teal-950/40 hover:bg-teal-100 dark:hover:bg-teal-900/50 text-teal-800 dark:text-teal-200 font-medium text-left border border-teal-200/50 dark:border-teal-800/50 transition"
+            >
+              👨‍⚕️ Doctor
+            </button>
+            <button
+              type="button"
+              onClick={() => fillDemoAccount("admin@example.com")}
+              className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-800 dark:text-blue-200 font-medium text-left border border-blue-200/50 dark:border-blue-800/50 transition"
+            >
+              🏥 Admin
+            </button>
+            <button
+              type="button"
+              onClick={() => fillDemoAccount("nurse@example.com")}
+              className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200 font-medium text-left border border-emerald-200/50 dark:border-emerald-800/50 transition"
+            >
+              👩‍⚕️ Nurse
+            </button>
+            <button
+              type="button"
+              onClick={() => fillDemoAccount("pharmacist@example.com")}
+              className="p-2 rounded-lg bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-purple-800 dark:text-purple-200 font-medium text-left border border-purple-200/50 dark:border-purple-800/50 transition"
+            >
+              💊 Pharmacist
+            </button>
+            <button
+              type="button"
+              onClick={() => fillDemoAccount("lab@example.com")}
+              className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/50 text-amber-800 dark:text-amber-200 font-medium text-left border border-amber-200/50 dark:border-amber-800/50 transition"
+            >
+              🧪 Lab
+            </button>
+            <button
+              type="button"
+              onClick={() => fillDemoAccount("bloodbank@example.com")}
+              className="p-2 rounded-lg bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-800 dark:text-rose-200 font-medium text-left border border-rose-200/50 dark:border-rose-800/50 transition"
+            >
+              🩸 Blood Bank
+            </button>
+            <button
+              type="button"
+              onClick={() => fillDemoAccount("insurer@example.com")}
+              className="p-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-800 dark:text-indigo-200 font-medium text-left border border-indigo-200/50 dark:border-indigo-800/50 transition"
+            >
+              🛡️ Insurer
+            </button>
+            <button
+              type="button"
+              onClick={() => fillDemoAccount("patient@example.com")}
+              className="p-2 rounded-lg bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-800 dark:text-sky-200 font-medium text-left border border-sky-200/50 dark:border-sky-800/50 transition"
+            >
+              🧑 Patient
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 flex justify-between items-center text-sm">
+          <button 
+            onClick={() => setShowForgotPassword(true)}
+            className="text-[#0FB6AA] hover:underline"
+          >
+            Forgot password?
+          </button>
+        </div>
+
+        <p className="text-center text-sm text-gray-500 mt-3">
           New to CryptCare?{" "}
           <button onClick={onShowRegister} className="text-[#0FB6AA] font-semibold hover:underline">Create an account</button>
         </p>
       </div>
+
+      {/* Forgot Password Modal */}
+      {showForgotPassword && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-[#0F1C2A] border border-gray-200 dark:border-gray-700/60 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                {forgotPasswordStep === "reset" ? "Set New Password" : "Reset Password"}
+              </h3>
+              <button
+                type="button"
+                onClick={closeForgotPasswordModal}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {forgotError && (
+              <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-xl p-3 mb-4 text-xs text-red-700 dark:text-red-300">
+                {forgotError}
+              </div>
+            )}
+
+            {forgotPasswordStep === "email" && (
+              <form onSubmit={handleForgotPassword} className="space-y-4">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Enter your registered email address and we'll generate a password reset link.
+                </p>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    value={forgotPasswordEmail}
+                    onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                    className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors"
+                    placeholder="doctor@example.com"
+                    required
+                  />
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={closeForgotPasswordModal}
+                    className="flex-1 py-2.5 px-4 border border-gray-300 dark:border-gray-700 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition font-medium text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={forgotLoading}
+                    className="flex-1 py-2.5 px-4 rounded-xl text-white font-medium transition disabled:opacity-70 text-sm shadow-md"
+                    style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}
+                  >
+                    {forgotLoading ? "Sending..." : "Send Reset Link"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {forgotPasswordStep === "reset" && (
+              <form onSubmit={handleResetPassword} className="space-y-4">
+                <div className="p-3 rounded-xl bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 text-xs text-teal-800 dark:text-teal-300">
+                  {forgotSuccessMsg || "Enter the 6-digit reset code from your email and your new password below."}
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                    6-Digit Reset Code / Token
+                  </label>
+                  <input
+                    type="text"
+                    value={resetToken}
+                    onChange={(e) => setResetToken(e.target.value)}
+                    placeholder="e.g. 123456 or paste token"
+                    className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors font-mono text-sm tracking-widest text-center"
+                    required
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1">Enter the 6-digit code sent to your email or link token</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                    New Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showNewPassword ? "text" : "password"}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Minimum 8 characters"
+                      className="w-full p-3 pr-10 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors"
+                      required
+                      minLength={8}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword(!showNewPassword)}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-[#0FB6AA]"
+                    >
+                      {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                    Confirm New Password
+                  </label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Repeat new password"
+                    className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors"
+                    required
+                    minLength={8}
+                  />
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={closeForgotPasswordModal}
+                    className="flex-1 py-2.5 px-4 border border-gray-300 dark:border-gray-700 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition font-medium text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={forgotLoading}
+                    className="flex-1 py-2.5 px-4 rounded-xl text-white font-medium transition disabled:opacity-70 text-sm shadow-md"
+                    style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}
+                  >
+                    {forgotLoading ? "Updating..." : "Update Password"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {forgotPasswordStep === "done" && (
+              <div className="text-center py-2">
+                <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center text-green-600 dark:text-green-400">
+                  <Check size={24} />
+                </div>
+                <h4 className="font-bold text-lg mb-2 text-gray-900 dark:text-white">Email Sent</h4>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
+                  {forgotSuccessMsg || "Your password has been successfully reset. You can now log in."}
+                </p>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setForgotPasswordStep("reset")}
+                    className="w-full py-2.5 px-4 rounded-xl border border-[#0FB6AA] text-[#0FB6AA] hover:bg-[#0FB6AA]/10 font-medium text-sm transition"
+                  >
+                    I Have The Reset Token (Enter Manually)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeForgotPasswordModal}
+                    className="w-full py-2.5 px-4 rounded-xl text-white font-medium shadow-md transition text-sm"
+                    style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}
+                  >
+                    Return to Sign In
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -3630,16 +4350,22 @@ export default function CryptcareApp() {
       const token = localStorage.getItem('access_token');
       if (token) {
         try {
-          const me = await authService.getCurrentUser();
+          const me = await authService.getMe();
           setCurrentUser(me);
           
-          const notifs = await notificationService.getAll();
-          setNotifications(notifs || []);
+          try {
+            const notifs = await notificationService.getAll();
+            setNotifications(notifs || []);
 
-          const count = await notificationService.getUnreadCount();
-          setUnreadCount(count);
+            const count = await notificationService.getUnreadCount();
+            setUnreadCount(count);
+          } catch (notifErr) {
+            console.warn("Notifications load failed:", notifErr);
+          }
         } catch (e) {
           localStorage.removeItem('access_token');
+          localStorage.removeItem('refresh_token');
+          setCurrentUser(null);
         }
       }
       setLoadingApp(false);

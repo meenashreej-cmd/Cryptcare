@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, consent, fraud, lab, notifications, nursing, vault, pharmacy, emergency, blood_bank, insurance, audit, admin, ai, hospital
+from app.api.v1.endpoints import auth, consent, fraud, lab, notifications, nursing, vault, pharmacy, emergency, blood_bank, insurance, audit, admin, ai, hospital, appointments
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
@@ -18,5 +18,6 @@ api_router.include_router(audit.router)
 api_router.include_router(admin.router)
 api_router.include_router(hospital.router)
 api_router.include_router(ai.router)
+api_router.include_router(appointments.router)
 
-# All 13 Phases are now built!
+# All 13 Phases are now built + Appointments!

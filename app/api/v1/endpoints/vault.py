@@ -16,7 +16,7 @@ consent-gate logic. The service layer still enforces ownership/consent
 independently — the two layers together form defence-in-depth.
 """
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Response, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.rbac import CurrentUser, require_role
@@ -62,11 +62,14 @@ def get_prescription_qr(
 
 @router.get("/prescriptions", response_model=list[PrescriptionResponse])
 def list_prescriptions(
-    patient_id: str,
+    patient_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(require_role(*_VAULT_READERS)),
 ):
-    rows = vault_service.get_prescriptions(db, current_user, patient_id)
+    target_id = patient_id or (current_user.id if current_user.role == "PATIENT" else None)
+    if not target_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "patient_id query parameter is required")
+    rows = vault_service.get_prescriptions(db, current_user, target_id)
     return [_to_prescription_response(r) for r in rows]
 
 
@@ -111,11 +114,14 @@ def add_allergy(
 
 @router.get("/allergies", response_model=list[AllergyResponse])
 def list_allergies(
-    patient_id: str,
+    patient_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(require_role(*_VAULT_READERS)),
 ):
-    return vault_service.get_allergies(db, current_user, patient_id)
+    target_id = patient_id or (current_user.id if current_user.role == "PATIENT" else None)
+    if not target_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "patient_id query parameter is required")
+    return vault_service.get_allergies(db, current_user, target_id)
 
 
 @router.post("/vaccinations", response_model=VaccinationResponse, status_code=201)
@@ -130,8 +136,11 @@ def add_vaccination(
 
 @router.get("/vaccinations", response_model=list[VaccinationResponse])
 def list_vaccinations(
-    patient_id: str,
+    patient_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(require_role(*_VAULT_READERS)),
 ):
-    return vault_service.get_vaccinations(db, current_user, patient_id)
+    target_id = patient_id or (current_user.id if current_user.role == "PATIENT" else None)
+    if not target_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "patient_id query parameter is required")
+    return vault_service.get_vaccinations(db, current_user, target_id)

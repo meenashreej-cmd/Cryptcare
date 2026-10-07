@@ -48,11 +48,7 @@ from app.models.audit import AccessLog, AccessActionEnum
 
 NOW = datetime.now(timezone.utc).replace(tzinfo=None)
 
-PASSWORD = os.environ.get("CRYPTCARE_SEED_PASSWORD")
-if not PASSWORD:
-    import getpass
-    print("\nWarning: No CRYPTCARE_SEED_PASSWORD environment variable found.")
-    PASSWORD = getpass.getpass("Enter password for demo accounts (must be >=10 chars, 1 upper, 1 digit): ")
+PASSWORD = os.environ.get("CRYPTCARE_SEED_PASSWORD", "Password123")
 
 
 def seed_db():
@@ -107,7 +103,7 @@ def seed_db():
         # Doctor
         doctor_user = make_user(
             "doctor@example.com", "+918000055566",
-            "Dr. Lena Cross", RoleEnum.DOCTOR, mfa=True,
+            "Dr. Lena Cross", RoleEnum.DOCTOR, mfa=False,
         )
         doctor_profile = DoctorProfile(
             doctor_id=doctor_user.user_id,
@@ -123,7 +119,7 @@ def seed_db():
         # Nurse
         nurse_user = make_user(
             "nurse@example.com", "+919000011122",
-            "Priya Rao", RoleEnum.NURSE, mfa=True,
+            "Priya Rao", RoleEnum.NURSE, mfa=False,
         )
         nurse_profile = NurseProfile(
             nurse_id=nurse_user.user_id,
@@ -139,7 +135,7 @@ def seed_db():
         # Pharmacist
         pharmacist_user = make_user(
             "pharmacist@example.com", "+917000022233",
-            "Imran Sheikh", RoleEnum.PHARMACIST, mfa=True,
+            "Imran Sheikh", RoleEnum.PHARMACIST, mfa=False,
         )
         pharmacist_profile = PharmacistProfile(
             pharmacist_id=pharmacist_user.user_id,
@@ -216,6 +212,26 @@ def seed_db():
             specialization="Neurology",
             hospital_name="City General Hospital",
             verified=False,
+        ))
+        db.flush()
+
+        # Also support test accounts doctor@test.com and patient@test.com
+        doc_test = make_user("doctor@test.com", "+918000055599", "Dr. Test Doctor", RoleEnum.DOCTOR, mfa=False)
+        db.add(DoctorProfile(
+            doctor_id=doc_test.user_id,
+            user_id=doc_test.user_id,
+            license_number="MCI-DOC-TEST-001",
+            specialization="General Medicine",
+            hospital_name="City General Hospital",
+            verified=True,
+        ))
+        patient_test = make_user("patient@test.com", "+919876543299", "Test Patient", RoleEnum.PATIENT)
+        db.add(PatientProfile(
+            patient_id=patient_test.user_id,
+            user_id=patient_test.user_id,
+            dob=date(1995, 1, 1),
+            gender="Other",
+            blood_group="B+",
         ))
         db.flush()
 

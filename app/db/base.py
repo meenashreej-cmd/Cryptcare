@@ -15,4 +15,5 @@ from app.models.fraud import *
 from app.models.notification import *
 from app.models.blood_bank import *
 from app.models.auth import *
+from app.models.appointment import *
 

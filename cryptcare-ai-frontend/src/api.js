@@ -66,7 +66,6 @@ api.interceptors.response.use(
       if (!refreshToken) {
         _isRefreshing = false;
         localStorage.removeItem('access_token');
-        window.location.reload();
         return Promise.reject(error);
       }
 
@@ -86,7 +85,6 @@ api.interceptors.response.use(
         processQueue(refreshError, null);
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
-        window.location.reload();
         return Promise.reject(refreshError);
       } finally {
         _isRefreshing = false;
@@ -103,8 +101,12 @@ export const authService = {
     const res = await api.post('/auth/register', payload);
     return res.data;
   },
-  verifyOtp: async (user_id, otp_code) => {
-    const res = await api.post('/auth/verify-otp', { user_id, otp_code });
+  verifyOtp: async (user_id, otp_code, preauthToken = null) => {
+    const config = {};
+    if (preauthToken) {
+      config.headers = { Authorization: `Bearer ${preauthToken}` };
+    }
+    const res = await api.post('/auth/verify-otp', { user_id, otp_code }, config);
     return res.data;
   },
   login: async (email, password, otp_code) => {
@@ -121,9 +123,28 @@ export const authService = {
     const res = await api.get('/auth/me');
     return res.data;
   },
+  getCurrentUser: async () => {
+    const res = await api.get('/auth/me');
+    return res.data;
+  },
   logout: () => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
+  },
+  forgotPassword: async (email) => {
+    const res = await api.post('/auth/forgot-password', { email });
+    return res.data;
+  },
+  resetPassword: async (resetToken, newPassword) => {
+    const res = await api.post('/auth/reset-password', {
+      reset_token: resetToken,
+      new_password: newPassword
+    });
+    return res.data;
+  },
+  resendPatientOtp: async () => {
+    const res = await api.post('/auth/resend-patient-otp');
+    return res.data;
   },
 };
 
@@ -400,6 +421,45 @@ export const emergencyService = {
   },
   updateContact: async (payload) => {
     const res = await api.put('/emergency/contact', payload);
+    return res.data;
+  },
+};
+
+// ── APPOINTMENTS ───────────────────────────────────────────────────────────
+export const appointmentService = {
+  createAppointment: async (payload) => {
+    const res = await api.post('/appointments', payload);
+    return res.data;
+  },
+  getAppointments: async (params = {}) => {
+    const queryParams = new URLSearchParams();
+    if (params.status) queryParams.append('status_filter', params.status);
+    if (params.from_date) queryParams.append('from_date', params.from_date);
+    if (params.to_date) queryParams.append('to_date', params.to_date);
+    if (params.limit) queryParams.append('limit', params.limit);
+    if (params.offset) queryParams.append('offset', params.offset);
+    
+    const res = await api.get(`/appointments?${queryParams.toString()}`);
+    return res.data;
+  },
+  getUpcomingAppointments: async (daysAhead = 7) => {
+    const res = await api.get(`/appointments/upcoming?days_ahead=${daysAhead}`);
+    return res.data;
+  },
+  getAppointmentStats: async () => {
+    const res = await api.get('/appointments/stats');
+    return res.data;
+  },
+  getAppointment: async (appointmentId) => {
+    const res = await api.get(`/appointments/${appointmentId}`);
+    return res.data;
+  },
+  updateAppointment: async (appointmentId, payload) => {
+    const res = await api.put(`/appointments/${appointmentId}`, payload);
+    return res.data;
+  },
+  cancelAppointment: async (appointmentId) => {
+    const res = await api.delete(`/appointments/${appointmentId}`);
     return res.data;
   },
 };

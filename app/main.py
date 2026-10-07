@@ -12,7 +12,7 @@ from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.models import audit, consent, lab, notification, nursing, user, vault, insurance, blood_bank, emergency, fraud  # noqa: F401
 
 kwargs = {}
-if settings.ENV != "dev":
+if settings.ENV not in ("dev", "development"):
     kwargs["docs_url"] = None
     kwargs["redoc_url"] = None
     kwargs["openapi_url"] = None
@@ -25,7 +25,7 @@ app = FastAPI(
 )
 
 allowed_origins = [origin.strip() for origin in settings.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
-if settings.ENV != "dev" and "*" in allowed_origins:
+if settings.ENV not in ("dev", "development") and "*" in allowed_origins:
     print("FATAL: Wildcard CORS allowed origins are not permitted outside of development.")
     sys.exit(1)
 

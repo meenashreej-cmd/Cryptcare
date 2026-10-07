@@ -449,10 +449,39 @@ def _dispatch_otp_email(to_email: str, full_name: str, otp: str) -> None:
         logger.error("Failed to send OTP email to %s: %s", to_email, exc)
 
 
+def _dispatch_email(to_email: str, full_name: str, subject: str, html_body: str) -> None:
+    """Generic email dispatch function"""
+    from_addr = settings.SMTP_FROM_ADDRESS or settings.SMTP_USERNAME
+    
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{settings.SMTP_FROM_NAME} <{from_addr}>"
+        msg["To"] = to_email
+
+        html_part = MIMEText(html_body, "html")
+        msg.attach(html_part)
+
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            server.sendmail(from_addr, [to_email], msg.as_string())
+
+        logger.info(f"Email sent successfully to {to_email}")
+    except Exception as e:
+        logger.error(f"Failed to send email to {to_email}: {e}")
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Email delivery failed: {e}"
+        )
+
+
 def verify_otp(db: Session, user_id: str, jti: str, otp_code: str, client_ip: str) -> User:
     _check_action_rate_limit(db, user_id, "verify_otp", limit=5, window_seconds=60, is_ip=False)
     _check_action_rate_limit(db, client_ip, "verify_otp", limit=20, window_seconds=60, is_ip=True)
-    if db.query(UsedJTI).filter(UsedJTI.jti == jti).first():
+    if jti and db.query(UsedJTI).filter(UsedJTI.jti == jti).first():
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token already used")
 
     record = _OTP_STORE.get(user_id)
@@ -493,7 +522,8 @@ def verify_otp(db: Session, user_id: str, jti: str, otp_code: str, client_ip: st
             # Stays PENDING_VERIFICATION (e.g. HOSPITAL_ADMIN)
             pass
 
-    db.add(UsedJTI(jti=jti))
+    if jti:
+        db.add(UsedJTI(jti=jti))
     db.commit()
     db.refresh(user)
     del _OTP_STORE[user_id]
@@ -596,6 +626,41 @@ def login(db: Session, email: str, password: str, otp_code: str | None, client_i
             "preauth_token": create_preauth_token(user.user_id, user.role.value, permissions, purpose="password_change")
         }
 
+    # NEW: All patients must verify with OTP on every login
+    if user.role == RoleEnum.PATIENT:
+        if not otp_code:
+            # Send OTP and return preauth token for patient login
+            send_patient_login_otp(db, user, client_ip)
+            permissions = ROLE_PERMISSIONS.get(user.role, [])
+            preauth_token = create_preauth_token(user.user_id, user.role.value, permissions, purpose="patient_login_otp")
+            resp = {"preauth_token": preauth_token, "requires_otp": True}
+            if settings.ENV in ("dev", "development") and not settings.SMTP_ENABLED:
+                resp["dev_otp"] = _OTP_STORE.get(user.user_id, {}).get("code")
+            return resp
+        else:
+            # Verify the provided OTP for patient login
+            record = _OTP_STORE.get(user.user_id)
+            if not record:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "No OTP pending for this user")
+
+            if record["attempts"] >= settings.OTP_MAX_ATTEMPTS:
+                del _OTP_STORE[user.user_id]
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Too many OTP attempts — request a new code")
+
+            record["attempts"] += 1
+            if record["code"] != otp_code:
+                if record["attempts"] >= settings.OTP_MAX_ATTEMPTS:
+                    del _OTP_STORE[user.user_id]
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid OTP code")
+
+            if datetime.now(timezone.utc) > record["expires_at"]:
+                del _OTP_STORE[user.user_id]
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "OTP expired — request a new code")
+
+            # OTP verified successfully, remove from store
+            del _OTP_STORE[user.user_id]
+            _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_OTP_VERIFIED, "patient_login_otp_verified", client_ip)
+
     requires_mfa = user.role.value in settings.MFA_REQUIRED_ROLES
 
     if requires_mfa and not user.mfa_enabled:
@@ -666,6 +731,14 @@ def refresh_access_token(db: Session, refresh_token: str, client_ip: str) -> dic
     new_refresh_token = create_refresh_token(user.user_id, user.role.value, permissions)
     
     new_rt_payload = verify_refresh_token(new_refresh_token)
+
+    # Insert the new token first so replaced_by_jti foreign key constraint is satisfied in MySQL
+    db.add(RefreshToken(
+        jti=new_rt_payload["jti"],
+        user_id=user.user_id,
+        expires_at=datetime.fromtimestamp(new_rt_payload["exp"], timezone.utc).replace(tzinfo=None)
+    ))
+    db.flush()
     
     # Use compare-and-set atomic update to prevent concurrent refreshes
     updated_rows = db.query(RefreshToken).filter(
@@ -686,12 +759,6 @@ def refresh_access_token(db: Session, refresh_token: str, client_ip: str) -> dic
         _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_SUSPICIOUS, "auth_token_concurrent_reuse_detected", client_ip)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token reuse detected — session terminated")
     
-    
-    db.add(RefreshToken(
-        jti=new_rt_payload["jti"],
-        user_id=user.user_id,
-        expires_at=datetime.fromtimestamp(new_rt_payload["exp"], timezone.utc).replace(tzinfo=None)
-    ))
     db.commit()
 
     return {"access_token": new_access_token, "refresh_token": new_refresh_token}
@@ -775,6 +842,7 @@ def enroll_mfa(db: Session, user_id: str, jti: str, otp_code: str, client_ip: st
 
 
 def resend_otp(db: Session, user_id: str, client_ip: str) -> None:
+    """Resend OTP for a user - rate limited"""
     _check_action_rate_limit(db, user_id, "resend_otp", limit=1, window_seconds=60, is_ip=False)
     _check_action_rate_limit(db, client_ip, "resend_otp", limit=5, window_seconds=60, is_ip=True)
         
@@ -783,4 +851,198 @@ def resend_otp(db: Session, user_id: str, client_ip: str) -> None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "User is not in pending verification state")
         
     _send_otp(user)
+    _record_auth_event(db, user_id, AccessActionEnum.AUTH_OTP_RESENT, "otp_resent", client_ip)
+
+
+def forgot_password(db: Session, email: str, client_ip: str) -> str | None:
+    """Send a password reset token/code to the user's email"""
+    _check_action_rate_limit(db, client_ip, "forgot_password", limit=20, window_seconds=300, is_ip=True)
+    
+    clean_email = email.strip().lower()
+    from sqlalchemy import func
+    user = db.query(User).filter(func.lower(User.email) == clean_email).first()
+    
+    if not user:
+        logger.warning("[AUTH] Password reset requested for UNREGISTERED email: '%s'", clean_email)
+        print(f"[AUTH] Password reset requested for UNREGISTERED email: '{clean_email}'")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No CryptCare account found with email '{email}'. Please check the spelling or register first."
+        )
+    
+    # Generate 6-digit OTP code stored in _OTP_STORE
+    otp = _generate_otp()
+    _OTP_STORE[user.user_id] = {
+        "code": otp,
+        "purpose": "password_reset",
+        "expires_at": datetime.now(timezone.utc) + timedelta(seconds=1800),
+        "attempts": 0,
+    }
+    
+    # Also generate JWT reset token for direct link
+    reset_token = create_preauth_token(
+        user.user_id, 
+        user.role.value, 
+        [], 
+        purpose="password_reset",
+        expiry_minutes=30
+    )
+    
+    _send_password_reset_email(user, reset_token, otp)
+    _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_OTP_SENT, "password_reset_requested", client_ip)
+    
+    return reset_token
+
+
+def reset_password(db: Session, reset_token: str, new_password: str, client_ip: str) -> None:
+    """Reset password using the reset token or 6-digit code"""
+    _check_action_rate_limit(db, client_ip, "reset_password", limit=10, window_seconds=300, is_ip=True)
+    
+    token_str = reset_token.strip()
+    user = None
+    
+    # Check if a 6-digit code was submitted
+    if len(token_str) == 6 and token_str.isdigit():
+        for uid, rec in list(_OTP_STORE.items()):
+            if rec.get("code") == token_str and rec.get("purpose") == "password_reset":
+                if rec.get("expires_at") and rec["expires_at"] > datetime.now(timezone.utc):
+                    user = db.query(User).filter(User.user_id == uid).first()
+                    del _OTP_STORE[uid]
+                    break
+                else:
+                    del _OTP_STORE[uid]
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, "Password reset code has expired. Please request a new one.")
+        if not user:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid password reset code.")
+    else:
+        try:
+            from app.core.security import verify_preauth_token
+            payload = verify_preauth_token(token_str, "password_reset")
+            user = db.query(User).filter(User.user_id == payload["sub"]).first()
+        except Exception:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired reset token")
+
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    
+    # Update password
+    user.password_hash = hash_password(new_password)
+    user.must_change_password = False
+    
+    # Invalidate all existing refresh tokens
+    db.query(RefreshToken).filter(RefreshToken.user_id == user.user_id).update({"revoked": True})
+    
+    db.commit()
+    _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_PASSWORD_CHANGED, "password_reset_completed", client_ip)
+
+
+def _send_password_reset_email(user: User, reset_token: str, otp: str) -> None:
+    """Send password reset email with 6-digit code and direct link"""
+    subject = f"Your CryptCare password reset code: {otp}"
+    reset_link = f"{settings.FRONTEND_URL}/?token={reset_token}"
+    logger.info("[AUTH] Password reset code for %s: %s (link: %s)", user.email, otp, reset_link)
+    print(f"[AUTH] Password reset code for {user.email}: {otp} (link: {reset_link})")
+
+    if not settings.SMTP_ENABLED:
+        logger.info("[DEV] SMTP disabled - skipping email dispatch to %s", user.email)
+        return
+
+    text_body = (
+        f"Hi {user.full_name},\n\n"
+        f"Your CryptCare password reset code is: {otp}\n\n"
+        f"You can enter this code in the password reset form, or click the link below:\n"
+        f"{reset_link}\n\n"
+        f"This code expires in 30 minutes. If you did not request this, you can safely ignore this email.\n\n"
+        f"-- The CryptCare Team"
+    )
+
+    html_body = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#EEF4F7;font-family:'Inter',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#EEF4F7;padding:40px 0;">
+    <tr><td align="center">
+      <table width="480" cellpadding="0" cellspacing="0"
+             style="background:#ffffff;border-radius:18px;border:1px solid rgba(15,40,60,0.10);
+                    box-shadow:0 10px 30px -15px rgba(0,0,0,0.15);overflow:hidden;">
+        <tr>
+          <td style="background:linear-gradient(135deg,#0FB6AA,#2F6FE0);padding:28px 32px;text-align:center;">
+            <span style="font-size:28px;">&#x1F510;</span>
+            <h1 style="margin:8px 0 0;color:#ffffff;font-size:20px;font-weight:700;letter-spacing:-0.3px;">
+              CryptCare
+            </h1>
+            <p style="margin:4px 0 0;color:rgba(255,255,255,0.75);font-size:11px;letter-spacing:0.06em;">
+              SOVEREIGN RX NETWORK
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px 36px;">
+            <p style="margin:0 0 6px;font-size:15px;color:#0B1E33;">Hi <strong>{user.full_name}</strong>,</p>
+            <p style="margin:0 0 20px;font-size:14px;color:#5B7184;line-height:1.6;">
+              Use the 6-digit code below to reset your CryptCare password. It expires in <strong>30 minutes</strong>.
+            </p>
+            <!-- 6-digit code box -->
+            <div style="background:#EEF4F7;border:1px solid rgba(15,182,170,0.30);
+                        border-radius:14px;padding:22px 0;text-align:center;margin-bottom:24px;">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:38px;
+                           font-weight:700;letter-spacing:10px;color:#0A8A82;">
+                {otp}
+              </span>
+            </div>
+            <div style="text-align:center;margin:24px 0;">
+              <a href="{reset_link}" style="display:inline-block;padding:12px 28px;background:#0FB6AA;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;border-radius:10px;">
+                Or Click Here to Reset
+              </a>
+            </div>
+            <p style="margin:0 0 8px;font-size:13px;color:#5B7184;line-height:1.6;">
+              <strong>Never share this code with anyone.</strong>
+            </p>
+            <p style="margin:0;font-size:12px;color:#8CA1B0;">
+              If you didn't request a password reset, you can safely ignore this email.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#F4F9FB;border-top:1px solid rgba(15,40,60,0.08);padding:16px 36px;text-align:center;">
+            <p style="margin:0;font-size:11px;color:#8CA1B0;">
+              This is an automated message from CryptCare &mdash; please do not reply.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+    from_addr = settings.SMTP_FROM_ADDRESS or settings.SMTP_USERNAME
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{settings.SMTP_FROM_NAME} <{from_addr}>"
+        msg["To"] = user.email
+        msg.attach(MIMEText(text_body, "plain", "utf-8"))
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            server.sendmail(from_addr, [user.email], msg.as_string())
+
+        logger.info("Password reset email sent successfully to %s", user.email)
+    except Exception as e:
+        logger.error("Failed to send password reset email to %s: %s", user.email, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to dispatch password reset email: {e}"
+        )
+
+
+def send_patient_login_otp(db: Session, user: User, client_ip: str) -> None:
+    """Send OTP for patient login - called every time a patient logs in"""
+    _send_otp(user)
+    _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_OTP_SENT, "patient_login_otp_sent", client_ip)
 

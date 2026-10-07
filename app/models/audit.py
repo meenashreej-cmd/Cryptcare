@@ -47,6 +47,8 @@ class AccessActionEnum(str, enum.Enum):
     AUTH_PASSWORD_CHANGED = "AUTH_PASSWORD_CHANGED"
     AUTH_MFA_ENROLLED = "AUTH_MFA_ENROLLED"
     AUTH_SUSPICIOUS = "AUTH_SUSPICIOUS"
+    AUTH_OTP_SENT = "AUTH_OTP_SENT"
+    AUTH_OTP_VERIFIED = "AUTH_OTP_VERIFIED"
 
 
 def _canonical(log_id: str, user_id: str | None, action: str,

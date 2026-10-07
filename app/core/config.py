@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     # App
     ENV: str = "development"
     CORS_ALLOWED_ORIGINS: str = "http://localhost:5173"
+    FRONTEND_URL: str = "http://localhost:5173"
 
 
 settings = Settings()

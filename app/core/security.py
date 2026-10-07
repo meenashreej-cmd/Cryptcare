@@ -60,12 +60,21 @@ def create_refresh_token(user_id: str, role: str, permissions: list[str]) -> str
     )
 
 
-def create_preauth_token(user_id: str, role: str, permissions: list[str], purpose: str) -> str:
+def create_preauth_token(
+    user_id: str,
+    role: str,
+    permissions: list[str],
+    purpose: str,
+    expires_delta: timedelta | None = None,
+    expiry_minutes: int | None = None,
+) -> str:
+    if expiry_minutes is not None:
+        expires_delta = timedelta(minutes=expiry_minutes)
     return _create_token(
         subject=user_id,
         role=role,
         permissions=permissions,
-        expires_delta=timedelta(minutes=5),
+        expires_delta=expires_delta or timedelta(minutes=5),
         token_type="preauth",
         purpose=purpose,
     )
