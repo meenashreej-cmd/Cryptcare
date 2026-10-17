@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 
 import heroIllustration from "./assets/hero_illustration.png";
+import heroVideo from "./assets/hero_video.mp4";
 import cryptcareIcon from "./assets/cryptcare_icon.png";
 import cryptcareLogoBadge from "./assets/cryptcare_logo_badge.png";
 import cardTomorrow from "./assets/card_tomorrow.png";
@@ -211,7 +212,9 @@ export default function LandingPage({ onLogin, onGetStarted }) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
           {/* Logo */}
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
-            <img src={cryptcareIcon} alt="CryptCare" className="w-10 h-10 object-contain drop-shadow-md" />
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-[#0FB6AA] to-[#2F6FE0] shadow-md shadow-[#0FB6AA]/25">
+              <ShieldCheck size={24} className="text-white" />
+            </div>
             <div>
               <span className="text-xl font-extrabold tracking-tight font-display text-[#0B1E33] dark:text-[#E7F1F5] block leading-none">
                 Crypt<span className="text-[#0FB6AA]">Care</span>
@@ -342,10 +345,10 @@ export default function LandingPage({ onLogin, onGetStarted }) {
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
-            
+
             {/* Left Column: Headings, Descriptions, Actions, Highlights */}
             <div className="lg:col-span-6 space-y-6 lg:space-y-8">
-              
+
               {/* 1.1 Introductory Small Tag */}
               <motion.div
                 initial={{ opacity: 0, y: prefersReducedMotion ? 0 : -10 }}
@@ -479,15 +482,25 @@ export default function LandingPage({ onLogin, onGetStarted }) {
                 className="relative w-full max-w-[620px] lg:max-w-none flex items-center justify-center"
               >
                 {/* Soft ambient back-glow behind artwork */}
-                <div className="absolute inset-0 bg-gradient-to-tr from-[#0FB6AA]/20 via-[#2F6FE0]/15 to-transparent rounded-full filter blur-3xl transform scale-90 -z-10" />
+                <div className="absolute inset-0 bg-gradient-to-tr from-[#0FB6AA]/25 via-[#2F6FE0]/20 to-transparent rounded-full filter blur-3xl transform scale-105 -z-10 pointer-events-none" />
 
-                {/* Hero Illustration Artwork */}
-                <img
-                  src={heroIllustration}
-                  alt="CryptCare Patient-Sovereign Healthcare Intelligence Network"
-                  className="w-full h-auto object-contain drop-shadow-[0_20px_35px_rgba(15,182,170,0.18)] rounded-2xl select-none"
-                  loading="eager"
-                />
+                {/* Hero Animated Video with Seamless Background Blend */}
+                <div className="relative w-full flex items-center justify-center">
+                  <video
+                    src={heroVideo}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    className="w-full h-auto object-contain select-none"
+                    style={{
+                      WebkitMaskImage:
+                        "radial-gradient(ellipse 85% 80% at 50% 50%, black 40%, rgba(0,0,0,0.8) 58%, transparent 82%)",
+                      maskImage:
+                        "radial-gradient(ellipse 85% 80% at 50% 50%, black 40%, rgba(0,0,0,0.8) 58%, transparent 82%)",
+                    }}
+                  />
+                </div>
               </motion.div>
             </div>
 
@@ -531,7 +544,7 @@ export default function LandingPage({ onLogin, onGetStarted }) {
       {/* ------------------------------------------------------------------ */}
       <section id="features" className="py-20 relative">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          
+
           {/* Section Heading Revealed with Upward Motion */}
           <motion.div
             initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 30 }}
@@ -553,7 +566,7 @@ export default function LandingPage({ onLogin, onGetStarted }) {
 
           {/* Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            
+
             {/* Card 1: Secure Healthcare for a Healthier Tomorrow */}
             <motion.div
               variants={cardVariants}
@@ -719,7 +732,7 @@ export default function LandingPage({ onLogin, onGetStarted }) {
       {/* ------------------------------------------------------------------ */}
       <section id="how-it-works" className="py-20 relative bg-slate-100/60 dark:bg-[#08131F]/50 border-y border-slate-200/80 dark:border-slate-800/80">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          
+
           <motion.div
             initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 30 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -798,7 +811,7 @@ export default function LandingPage({ onLogin, onGetStarted }) {
       {/* ------------------------------------------------------------------ */}
       <section id="ecosystem" className="py-20 relative">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          
+
           <motion.div
             initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 30 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -863,7 +876,7 @@ export default function LandingPage({ onLogin, onGetStarted }) {
       {/* ------------------------------------------------------------------ */}
       <section id="security" className="py-20 relative bg-gradient-to-b from-transparent via-[#0FB6AA]/05 to-transparent">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          
+
           {/* Security Stats Bar */}
           <motion.div
             initial={{ opacity: 0, scale: 0.96 }}
@@ -951,7 +964,9 @@ export default function LandingPage({ onLogin, onGetStarted }) {
       <footer className="border-t border-slate-200/80 dark:border-slate-800/80 bg-white/70 dark:bg-[#050D17]/90 py-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-3">
-            <img src={cryptcareIcon} alt="CryptCare" className="w-8 h-8 object-contain drop-shadow-sm" />
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gradient-to-br from-[#0FB6AA] to-[#2F6FE0] text-white">
+              <ShieldCheck size={20} />
+            </div>
             <div>
               <span className="font-extrabold font-display text-sm">
                 Crypt<span className="text-[#0FB6AA]">Care</span>
