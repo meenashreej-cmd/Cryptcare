@@ -3433,6 +3433,9 @@ const RegLogo = () => (
     <span className="text-xl font-extrabold tracking-tight font-display text-[#072B57] dark:text-[#E7F1F5] leading-none">
       Crypt<span className="text-[#0FB6AA]">Care</span>
     </span>
+    <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium tracking-wide">
+      Where Healthcare Meets Privacy
+    </span>
   </div>
 );
 
@@ -4023,6 +4026,9 @@ const LoginPage = ({ onLogin, onShowRegister, onBackToLanding, registeredSuccess
           <img src={cryptcareIcon} alt="CryptCare" className="w-14 h-14 object-contain drop-shadow-sm" />
           <span className="text-xl font-extrabold tracking-tight font-display text-[#072B57] dark:text-[#E7F1F5] leading-none">
             Crypt<span className="text-[#0FB6AA]">Care</span>
+          </span>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium tracking-wide">
+            Where Healthcare Meets Privacy
           </span>
         </div>
         <h2 className="text-2xl font-bold text-center mb-1">Welcome to CryptCare</h2>

@@ -212,15 +212,13 @@ export default function LandingPage({ onLogin, onGetStarted }) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
           {/* Logo */}
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-[#0FB6AA] to-[#2F6FE0] shadow-md shadow-[#0FB6AA]/25">
-              <ShieldCheck size={24} className="text-white" />
-            </div>
+            <img src={cryptcareIcon} alt="CryptCare" className="w-10 h-10 object-contain drop-shadow-md" />
             <div>
               <span className="text-xl font-extrabold tracking-tight font-display text-[#0B1E33] dark:text-[#E7F1F5] block leading-none">
                 Crypt<span className="text-[#0FB6AA]">Care</span>
               </span>
               <span className="text-[10px] tracking-wider text-slate-500 dark:text-slate-400 font-medium block leading-none mt-1">
-                Your Health. Your Data. Your Control.
+                Where Healthcare Meets Privacy
               </span>
             </div>
           </div>
@@ -964,15 +962,13 @@ export default function LandingPage({ onLogin, onGetStarted }) {
       <footer className="border-t border-slate-200/80 dark:border-slate-800/80 bg-white/70 dark:bg-[#050D17]/90 py-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gradient-to-br from-[#0FB6AA] to-[#2F6FE0] text-white">
-              <ShieldCheck size={20} />
-            </div>
+            <img src={cryptcareIcon} alt="CryptCare" className="w-8 h-8 object-contain drop-shadow-sm" />
             <div>
               <span className="font-extrabold font-display text-sm">
                 Crypt<span className="text-[#0FB6AA]">Care</span>
               </span>
               <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                Sovereign Healthcare Intelligence & Prescription Network
+                Where Healthcare Meets Privacy
               </p>
             </div>
           </div>
