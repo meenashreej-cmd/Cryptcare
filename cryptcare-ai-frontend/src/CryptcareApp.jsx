@@ -5,6 +5,8 @@ import api, {
   adminService, bloodBankService, labService, hospitalService,
   appointmentService,
 } from "./api";
+import LandingPage from "./LandingPage";
+import cryptcareIcon from "./assets/cryptcare_icon.png";
 import {
   ShieldCheck, ShieldAlert, Shield, Lock, Unlock, Fingerprint, KeyRound,
   LayoutDashboard, FolderLock, FileText, Pill, AlertTriangle, FlaskConical,
@@ -3426,10 +3428,11 @@ const RegCard = ({ children, wide }) => (
 );
 
 const RegLogo = () => (
-  <div className="flex justify-center mb-5">
-    <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-gradient-to-br from-[#0FB6AA] to-[#2F6FE0]">
-      <ShieldCheck size={26} color="#fff" />
-    </div>
+  <div className="flex flex-col items-center justify-center mb-5 gap-1.5">
+    <img src={cryptcareIcon} alt="CryptCare" className="w-14 h-14 object-contain drop-shadow-sm" />
+    <span className="text-xl font-extrabold tracking-tight font-display text-[#072B57] dark:text-[#E7F1F5] leading-none">
+      Crypt<span className="text-[#0FB6AA]">Care</span>
+    </span>
   </div>
 );
 
@@ -3485,7 +3488,7 @@ const RegSelect = ({ children, ...props }) => (
   </select>
 );
 
-const RegisterPage = ({ onRegistered, onBackToLogin }) => {
+const RegisterPage = ({ onRegistered, onBackToLogin, onBackToLanding }) => {
   // step: "role" | "details" | "otp"
   const [step, setStep] = useState("role");
   const [selectedRole, setRole] = useState(null);
@@ -3596,6 +3599,15 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
   if (step === "role") return (
     <div className="min-h-screen flex items-center justify-center bg-[#EEF4F7] dark:bg-[#050D17] text-[#0B1E33] dark:text-[#E7F1F5] p-4">
       <RegCard wide>
+        {onBackToLanding && (
+          <button
+            type="button"
+            onClick={onBackToLanding}
+            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-[#0FB6AA] mb-3 font-medium cursor-pointer"
+          >
+            ← Back to Home
+          </button>
+        )}
         <RegLogo />
         <h2 className="text-xl font-bold text-center mb-1" style={{ fontFamily: "'Sora', sans-serif" }}>Create your account</h2>
         <p className="text-sm text-center text-gray-500 dark:text-gray-400 mb-6">Select your role to get started</p>
@@ -3820,7 +3832,7 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
 /* LOGIN PAGE                                                             */
 /* ---------------------------------------------------------------------- */
 
-const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
+const LoginPage = ({ onLogin, onShowRegister, onBackToLanding, registeredSuccess }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otpCode, setOtpCode] = useState("");
@@ -3998,10 +4010,20 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#EEF4F7] dark:bg-[#050D17] text-[#0B1E33] dark:text-[#E7F1F5] font-sans">
       <div className="w-full max-w-md p-8 bg-white/70 dark:bg-[#0F1C2A]/55 backdrop-blur-xl border border-[#0F283C]/10 dark:border-[#78BEC8]/14 rounded-2xl shadow-xl">
-        <div className="flex justify-center mb-6">
-          <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-gradient-to-br from-[#0FB6AA] to-[#2F6FE0]">
-            <ShieldCheck size={26} color="#fff" />
-          </div>
+        {onBackToLanding && (
+          <button
+            type="button"
+            onClick={onBackToLanding}
+            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-[#0FB6AA] mb-4 font-medium cursor-pointer"
+          >
+            ← Back to Home
+          </button>
+        )}
+        <div className="flex flex-col items-center justify-center mb-5 gap-1.5">
+          <img src={cryptcareIcon} alt="CryptCare" className="w-14 h-14 object-contain drop-shadow-sm" />
+          <span className="text-xl font-extrabold tracking-tight font-display text-[#072B57] dark:text-[#E7F1F5] leading-none">
+            Crypt<span className="text-[#0FB6AA]">Care</span>
+          </span>
         </div>
         <h2 className="text-2xl font-bold text-center mb-1">Welcome to CryptCare</h2>
         <p className="text-sm text-center text-gray-500 dark:text-gray-400 mb-6">Enter your credentials to continue</p>
@@ -4361,10 +4383,18 @@ export default function CryptcareApp() {
   const [roleMenu, setRoleMenu] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loadingApp, setLoadingApp] = useState(true);
+  const [authView, setAuthView] = useState("landing"); // "landing" | "login" | "register"
   const [showRegister, setShowRegister] = useState(false);
   const [registeredSuccess, setRegisteredSuccess] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("token")) {
+      setAuthView("login");
+    }
+  }, []);
 
   useEffect(() => {
     const init = async () => {
@@ -4407,7 +4437,7 @@ export default function CryptcareApp() {
 
   if (loadingApp) return <div className="min-h-screen flex items-center justify-center">Loading Secure Vault...</div>;
   if (!currentUser) {
-    if (showRegister) return (
+    if (authView === "register" || showRegister) return (
       <RegisterPage
         onRegistered={async (email, password) => {
           try {
@@ -4416,20 +4446,30 @@ export default function CryptcareApp() {
             setCurrentUser(me);
             setNav("overview");
             setShowRegister(false);
+            setAuthView("landing");
           } catch (e) {
             // Login after register failed (e.g. MFA role) — send to login page
             setShowRegister(false);
             setRegisteredSuccess(true);
+            setAuthView("login");
           }
         }}
-        onBackToLogin={() => { setShowRegister(false); setRegisteredSuccess(false); }}
+        onBackToLogin={() => { setShowRegister(false); setRegisteredSuccess(false); setAuthView("login"); }}
+        onBackToLanding={() => { setShowRegister(false); setRegisteredSuccess(false); setAuthView("landing"); }}
+      />
+    );
+    if (authView === "login") return (
+      <LoginPage
+        onLogin={(user) => { setCurrentUser(user); setNav("overview"); setRegisteredSuccess(false); }}
+        onShowRegister={() => { setShowRegister(true); setRegisteredSuccess(false); setAuthView("register"); }}
+        onBackToLanding={() => { setAuthView("landing"); }}
+        registeredSuccess={registeredSuccess}
       />
     );
     return (
-      <LoginPage
-        onLogin={(user) => { setCurrentUser(user); setNav("overview"); setRegisteredSuccess(false); }}
-        onShowRegister={() => { setShowRegister(true); setRegisteredSuccess(false); }}
-        registeredSuccess={registeredSuccess}
+      <LandingPage
+        onLogin={() => setAuthView("login")}
+        onGetStarted={() => setAuthView("register")}
       />
     );
   }
@@ -4461,6 +4501,7 @@ export default function CryptcareApp() {
   const handleLogout = () => {
     authService.logout();
     setCurrentUser(null);
+    setAuthView("landing");
   };
 
   return (
@@ -4472,9 +4513,7 @@ export default function CryptcareApp() {
         <aside className={`fixed lg:static z-40 top-0 left-0 h-full lg:h-auto w-[260px] p-4 flex flex-col gap-2 transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
           style={{ background: "var(--panel-solid)", borderRight: "1px solid var(--border)" }}>
           <div className="flex items-center gap-2.5 px-2 py-3 mb-2">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, var(--teal), var(--blue))" }}>
-              <ShieldCheck size={19} color="#fff" />
-            </div>
+            <img src={cryptcareIcon} alt="CryptCare" className="w-9 h-9 object-contain" />
             <div>
               <div className="mv-font-display font-bold text-sm leading-tight">CryptCare</div>
               <div className="text-[10px] mv-font-mono" style={{ color: "var(--text-faint)" }}>SOVEREIGN RX NETWORK</div>
