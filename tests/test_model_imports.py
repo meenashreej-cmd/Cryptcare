@@ -9,7 +9,7 @@ def test_all_models_registered():
         'fraud_alerts', 'lab_test_requests', 'vital_signs',
         'emergency_access_tokens', 'blood_units', 'blood_requests', 'insurance_claims',
         'broadcast_cooldowns', 'action_rate_limits', 'ip_rate_limits',
-        'used_jtis', 'mfa_states', 'refresh_tokens'
+        'used_jtis', 'mfa_states', 'refresh_tokens', 'appointments'
     }
     registered_tables = set(Base.metadata.tables.keys())
     assert expected_tables.issubset(registered_tables), f"Missing tables: {expected_tables - registered_tables}"
