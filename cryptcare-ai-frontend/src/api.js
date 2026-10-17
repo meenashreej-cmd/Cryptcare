@@ -119,6 +119,18 @@ export const authService = {
     }
     return res.data;
   },
+  enrollMfa: async (otp_code, preauthToken) => {
+    const config = {};
+    if (preauthToken) {
+      config.headers = { Authorization: `Bearer ${preauthToken}` };
+    }
+    const res = await api.post('/auth/enroll-mfa', { otp_code }, config);
+    if (res.data.access_token) {
+      localStorage.setItem('access_token', res.data.access_token);
+      localStorage.setItem('refresh_token', res.data.refresh_token);
+    }
+    return res.data;
+  },
   getMe: async () => {
     const res = await api.get('/auth/me');
     return res.data;

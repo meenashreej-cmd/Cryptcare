@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # JWT
     JWT_SECRET_KEY: str = Field(min_length=32)
     JWT_ALGORITHM: str = "HS256"
-    MFA_REQUIRED_ROLES: list[str] = []
+    MFA_REQUIRED_ROLES: list[str] = ["DOCTOR", "NURSE", "PHARMACIST", "LAB", "HOSPITAL_ADMIN", "ADMIN"]
     BREAK_GLASS_ALLOWED_ROLES: list[str] = ["DOCTOR"]
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7

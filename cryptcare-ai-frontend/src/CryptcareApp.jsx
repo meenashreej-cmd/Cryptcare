@@ -3731,7 +3731,7 @@ const RegisterPage = ({ onRegistered, onBackToLogin }) => {
             )}
 
             {/* MFA notice for roles that require it */}
-            {["DOCTOR", "NURSE", "PHARMACIST", "ADMIN"].includes(selectedRole) && (
+            {["DOCTOR", "NURSE", "PHARMACIST", "LAB", "HOSPITAL_ADMIN", "ADMIN"].includes(selectedRole) && (
               <div className="flex items-start gap-2 p-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-300">
                 <KeyRound size={14} className="mt-0.5 shrink-0" />
                 <span>This role requires TOTP multi-factor authentication. After registration you will receive a QR code — scan it with Google Authenticator or Authy before your first login.</span>
@@ -3828,6 +3828,7 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
   const [error, setError] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
   const [needsOtp, setNeedsOtp] = useState(false);
+  const [mfaEnrollPreauth, setMfaEnrollPreauth] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [forgotPasswordStep, setForgotPasswordStep] = useState("email"); // "email" | "reset" | "done"
@@ -3925,13 +3926,27 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
     setInfoMessage("");
     
     try {
+      if (mfaEnrollPreauth && otpCode) {
+        await authService.enrollMfa(otpCode.trim(), mfaEnrollPreauth);
+        const me = await authService.getMe();
+        onLogin(me);
+        return;
+      }
+
       const response = await authService.login(email, password, otpCode);
       
       if (response.requires_otp) {
         setNeedsOtp(true);
+        setMfaEnrollPreauth(null);
         setOtpCode("");
         setError("");
         setInfoMessage("Verification code sent to your email. Please check your inbox and enter the 6-digit code below.");
+      } else if (response.requires_mfa_enrollment) {
+        setNeedsOtp(true);
+        setMfaEnrollPreauth(response.preauth_token);
+        setOtpCode("");
+        setError("");
+        setInfoMessage("First-time setup: Enter the 6-digit code from your authenticator app to enroll and complete login.");
       } else {
         const me = await authService.getMe();
         onLogin(me);
@@ -3940,6 +3955,7 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
       setInfoMessage("");
       if (err?.response?.data?.detail === "MFA code required") {
         setNeedsOtp(true);
+        setMfaEnrollPreauth(null);
         setOtpCode("");
         setError("Enter your 6-digit authenticator code");
       } else {
@@ -3973,6 +3989,7 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
     setEmail(demoEmail);
     setPassword("Password123");
     setNeedsOtp(false);
+    setMfaEnrollPreauth(null);
     setOtpCode("");
     setError("");
     setInfoMessage("");
@@ -4054,15 +4071,19 @@ const LoginPage = ({ onLogin, onShowRegister, registeredSuccess }) => {
                 required
               />
               <div className="flex justify-between items-center mt-2">
-                <p className="text-xs text-gray-500">Check your email or server log for the 6-digit code</p>
-                <button
-                  type="button"
-                  onClick={handleResendOtp}
-                  disabled={!canResendOtp}
-                  className="text-xs text-[#0FB6AA] hover:underline disabled:text-gray-400"
-                >
-                  {canResendOtp ? 'Resend Code' : `Resend in ${resendCooldown}s`}
-                </button>
+                <p className="text-xs text-gray-500">
+                  {mfaEnrollPreauth ? "Enter code from Google Authenticator / Authy" : "Check your email or authenticator app for the 6-digit code"}
+                </p>
+                {!mfaEnrollPreauth && (
+                  <button
+                    type="button"
+                    onClick={handleResendOtp}
+                    disabled={!canResendOtp}
+                    className="text-xs text-[#0FB6AA] hover:underline disabled:text-gray-400"
+                  >
+                    {canResendOtp ? 'Resend Code' : `Resend in ${resendCooldown}s`}
+                  </button>
+                )}
               </div>
             </div>
           )}
