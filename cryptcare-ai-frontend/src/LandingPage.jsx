@@ -696,28 +696,15 @@ export default function LandingPage({ onLogin, onGetStarted }) {
               whileInView="visible"
               viewport={{ once: true, amount: 0.2 }}
               whileHover={prefersReducedMotion ? {} : { y: -6, boxShadow: "0 20px 35px -15px rgba(47, 111, 224, 0.25)" }}
-              className="rounded-3xl overflow-hidden bg-white/70 dark:bg-[#0F1C2A]/60 border border-slate-200/80 dark:border-slate-800/80 backdrop-blur-xl shadow-md transition-all flex flex-col justify-between group md:col-span-2 lg:col-span-2"
+              className="rounded-3xl overflow-hidden bg-white/70 dark:bg-[#0F1C2A]/60 border border-slate-200/80 dark:border-slate-800/80 backdrop-blur-xl shadow-md transition-all group md:col-span-2 lg:col-span-2 flex items-center justify-center"
             >
-              <div className="overflow-hidden">
-                <motion.img
-                  whileHover={prefersReducedMotion ? {} : { scale: 1.02 }}
-                  transition={{ duration: 0.4 }}
-                  src={cardCollab}
-                  alt="Better Collaboration for Better Care"
-                  className="w-full h-52 object-cover object-center"
-                />
-              </div>
-              <div className="p-6 space-y-2">
-                <div className="flex items-center gap-2 text-xs font-bold text-blue-600 dark:text-blue-400">
-                  <HeartPulse size={15} /> Unified Ecosystem
-                </div>
-                <h3 className="text-xl font-bold text-[#0B1E33] dark:text-[#E7F1F5] group-hover:text-[#2F6FE0] transition-colors">
-                  Better Collaboration for Better Care
-                </h3>
-                <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Bringing together patients, doctors, pharmacies, laboratories, and insurance providers in a unified, mathematically trusted network.
-                </p>
-              </div>
+              <motion.img
+                whileHover={prefersReducedMotion ? {} : { scale: 1.015 }}
+                transition={{ duration: 0.4 }}
+                src={cardCollab}
+                alt="Better Collaboration for Better Care - Unified Ecosystem"
+                className="w-full h-auto object-contain block select-none"
+              />
             </motion.div>
 
           </div>
