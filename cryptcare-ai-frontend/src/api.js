@@ -10,7 +10,7 @@ import axios from 'axios';
  *    FastAPI container on the same host.
  */
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: (import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace(/\/+$/, '') : '') + '/api/v1',
 });
 
 // ── Request interceptor ────────────────────────────────────────────────────
