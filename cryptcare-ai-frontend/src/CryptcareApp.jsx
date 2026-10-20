@@ -334,7 +334,7 @@ function formatLedgerTimeAgo(isoString) {
   if (!isoString) return "just now";
   try {
     const diffMs = Date.now() - new Date(isoString).getTime();
-    if (diffMs < 0 || isNaN(diffMs)) return "just now";
+    if (diffMs <= 5000 || isNaN(diffMs)) return "just now";
     const sec = Math.floor(diffMs / 1000);
     if (sec < 60) return `${sec}s ago`;
     const min = Math.floor(sec / 60);
@@ -344,7 +344,7 @@ function formatLedgerTimeAgo(isoString) {
     const days = Math.floor(hrs / 24);
     return `${days}d ago`;
   } catch {
-    return "recent";
+    return "just now";
   }
 }
 

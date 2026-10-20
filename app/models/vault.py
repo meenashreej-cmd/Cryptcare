@@ -5,9 +5,6 @@ from datetime import datetime
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, LargeBinary, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base
-
-
 class PrescriptionStatusEnum(str, enum.Enum):
     ACTIVE = "ACTIVE"
     DISPENSED = "DISPENSED"
@@ -19,6 +16,9 @@ class SeverityEnum(str, enum.Enum):
     MILD = "MILD"
     MODERATE = "MODERATE"
     SEVERE = "SEVERE"
+
+
+from app.db.base import Base
 
 
 class Prescription(Base):

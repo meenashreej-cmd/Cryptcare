@@ -143,9 +143,15 @@ export default function RegisterPage({
       if (typeof detail === "string") {
         setError(detail);
       } else if (Array.isArray(detail)) {
-        setError(detail.map((m) => m.msg).join("; "));
+        setError(detail.map((m) => m.msg || JSON.stringify(m)).join("; "));
+      } else if (err?.response?.data?.message) {
+        setError(err.response.data.message);
+      } else if (err?.message === "Network Error" || !err?.response) {
+        setError("Unable to connect to backend server. Please verify the API server is running on port 8000.");
+      } else if (err?.response?.status >= 500) {
+        setError(`Server error (${err.response.status}). Please check backend server logs or try again shortly.`);
       } else {
-        setError("Registration could not be completed. Please check the entered fields.");
+        setError(err?.message || "Registration could not be completed. Please check your inputs.");
       }
     } finally {
       setLoading(false);

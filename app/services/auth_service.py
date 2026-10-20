@@ -321,6 +321,7 @@ def register_user(db: Session, payload: RegisterRequest, client_ip: str) -> tupl
 
     db.commit()
     db.refresh(user)
+    _record_auth_event(db, user.user_id, AccessActionEnum.WRITE, "identity_genesis_registered", client_ip)
 
     # Returned exactly once, at registration — same principle as GitHub/AWS
     # showing MFA/recovery secrets only at setup time, never retrievable
@@ -535,6 +536,7 @@ def verify_otp(db: Session, user_id: str, jti: str, otp_code: str, client_ip: st
         db.add(UsedJTI(jti=jti))
     db.commit()
     db.refresh(user)
+    _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_OTP_VERIFIED, "identity_registration_verified", client_ip)
     del _OTP_STORE[user_id]
     return user
 

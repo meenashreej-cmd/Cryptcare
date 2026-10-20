@@ -120,6 +120,10 @@ export default function LoginPage({
         setOtpCode("");
         setError("");
         setInfoMessage("Multi-Factor Authentication (MFA) required. Enter the 6-digit code from your authenticator app.");
+      } else if (err?.message === "Network Error" || !err?.response) {
+        setError("Unable to connect to backend server. Please verify the API server is running on port 8000.");
+      } else if (err?.response?.status >= 500) {
+        setError(`Server error (${err.response.status}). Please check backend server logs or try again shortly.`);
       } else {
         setError(err?.response?.data?.detail || "Invalid email or password. Please try again.");
       }
