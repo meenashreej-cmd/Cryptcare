@@ -110,13 +110,25 @@ def test_otp_verification_promotes_patient_to_active(client, db):
     user = db.query(User).filter(User.email == email).first()
     assert user.status == UserStatusEnum.ACTIVE
 
-    # Login again should now return full access_token
+    # Login again requires patient OTP MFA (step 1)
     resp = client.post("/api/v1/auth/login", json={
         "email": email,
         "password": "Password123!"
     })
     assert resp.status_code == 200
     data = resp.json()
-    assert data.get("access_token") is not None
-    assert data.get("preauth_token") is None
+    assert data["requires_otp"] is True
+    assert data.get("access_token") is None
+
+    # Step 2: Patient submits login OTP to receive access_token
+    login_otp = _OTP_STORE[user_id]["code"]
+    resp2 = client.post("/api/v1/auth/login", json={
+        "email": email,
+        "password": "Password123!",
+        "otp_code": login_otp
+    })
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2.get("access_token") is not None
+    assert data2.get("preauth_token") is None
 

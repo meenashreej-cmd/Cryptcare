@@ -47,17 +47,13 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
     client_ip = get_client_ip(request)
     user, mfa_provisioning_uri, license_verified = auth_service.register_user(db, payload, client_ip)
     preauth_token = create_preauth_token(user.user_id, user.role.value, [], purpose="otp_verification")
-    dev_otp = None
-    if settings.ENV in ("dev", "development") and not settings.SMTP_ENABLED:
-        from app.services.auth_service import _OTP_STORE
-        dev_otp = _OTP_STORE.get(user.user_id, {}).get("code")
     return RegisterResponse(
         user_id=user.user_id,
         status=user.status,
         license_verified=license_verified,
         mfa_provisioning_uri=mfa_provisioning_uri,
         preauth_token=preauth_token,
-        dev_otp=dev_otp,
+        dev_otp=None,
     )
 
 

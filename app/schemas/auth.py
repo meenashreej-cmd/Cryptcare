@@ -128,6 +128,8 @@ class TokenResponse(BaseModel):
     requires_mfa_enrollment: bool = False
     token_type: str = "bearer"
     dev_otp: Optional[str] = None
+    dev_mfa_secret: Optional[str] = None
+    mfa_provisioning_uri: Optional[str] = None
 
 
 class RefreshRequest(BaseModel):

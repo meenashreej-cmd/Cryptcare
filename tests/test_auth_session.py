@@ -6,6 +6,11 @@ from app.models.auth import RefreshToken
 from app.core.security import create_refresh_token, hash_password
 from app.services.auth_service import login, _OTP_STORE
 
+def _login_patient(client, user):
+    client.post("/api/v1/auth/login", json={"email": user.email, "password": "Password123!"})
+    otp_code = _OTP_STORE[user.user_id]["code"]
+    return client.post("/api/v1/auth/login", json={"email": user.email, "password": "Password123!", "otp_code": otp_code})
+
 def test_refresh_reuse_revokes_family(client, db):
     # Setup test user
     user = User(
@@ -16,7 +21,7 @@ def test_refresh_reuse_revokes_family(client, db):
     db.commit()
 
     # Login to get first refresh token
-    resp = client.post("/api/v1/auth/login", json={"email": "reuse@test.com", "password": "Password123!"})
+    resp = _login_patient(client, user)
     rt1 = resp.cookies.get("refresh_token")
     assert rt1 is not None
 
@@ -48,7 +53,7 @@ def test_concurrent_refresh_race(client, db):
     db.commit()
 
     # Login to get first refresh token
-    resp = client.post("/api/v1/auth/login", json={"email": "race2@test.com", "password": "Password123!"})
+    resp = _login_patient(client, user)
     rt1 = resp.cookies.get("refresh_token")
 
     # We mock the SQLAlchemy Query.update method to return 0, simulating what happens
@@ -71,7 +76,7 @@ def test_cookie_flags_per_environment(client, db, monkeypatch):
 
     # Test DEV environment
     monkeypatch.setattr("app.api.v1.endpoints.auth.settings.ENV", "dev")
-    resp_dev = client.post("/api/v1/auth/login", json={"email": "cookie@test.com", "password": "Password123!"})
+    resp_dev = _login_patient(client, user)
     cookie_dev = resp_dev.headers.get("set-cookie", "")
     assert "HttpOnly" in cookie_dev
     assert "SameSite=lax" in cookie_dev
@@ -79,7 +84,7 @@ def test_cookie_flags_per_environment(client, db, monkeypatch):
 
     # Test PRODUCTION environment
     monkeypatch.setattr("app.api.v1.endpoints.auth.settings.ENV", "production")
-    resp_prod = client.post("/api/v1/auth/login", json={"email": "cookie@test.com", "password": "Password123!"})
+    resp_prod = _login_patient(client, user)
     cookie_prod = resp_prod.headers.get("set-cookie", "")
     assert "Secure" in cookie_prod
 
@@ -124,7 +129,7 @@ def test_change_password_requires_current(client, db):
     db.add(user)
     db.commit()
 
-    resp = client.post("/api/v1/auth/login", json={"email": "change@test.com", "password": "Password123!"})
+    resp = _login_patient(client, user)
     access_token = resp.json()["access_token"]
 
     # Wrong current password
@@ -140,5 +145,6 @@ def test_change_password_requires_current(client, db):
         "new_password": "NewPassword123!"
     }, headers={"Authorization": f"Bearer {access_token}"})
     assert r2.status_code == 200
+
 
 

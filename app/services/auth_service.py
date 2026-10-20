@@ -54,8 +54,17 @@ logger = logging.getLogger(__name__)
 
 import time
 
-# Production: move to Redis (or a DB table) with TTL support.
 _OTP_STORE: dict[str, dict] = {}
+
+def _is_expired(dt: datetime | None) -> bool:
+    if dt is None:
+        return True
+    now = datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now > dt
 
 def _check_action_rate_limit(db: Session, target_id: str, action: str, limit: int, window_seconds: int, is_ip: bool = False) -> None:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -491,7 +500,7 @@ def verify_otp(db: Session, user_id: str, jti: str, otp_code: str, client_ip: st
     if record["attempts"] >= settings.OTP_MAX_ATTEMPTS:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many failed OTP attempts")
 
-    if datetime.now(timezone.utc) > record["expires_at"]:
+    if _is_expired(record["expires_at"]):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "OTP expired, please request a new one")
 
     if not hmac.compare_digest(record["code"], otp_code):
@@ -610,10 +619,63 @@ def login(db: Session, email: str, password: str, otp_code: str | None, client_i
             _record_auth_event(db, None, AccessActionEnum.AUTH_FAILED, f"auth_login_failed:email={email}", client_ip)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
 
+    is_demo_account = (
+        email.lower().endswith("@example.com")
+        or email.lower() in ("patient@test.com", "doctor@test.com")
+    )
+
     if user.status == UserStatusEnum.PENDING_VERIFICATION:
         permissions = ROLE_PERMISSIONS.get(user.role, [])
         preauth_token = create_preauth_token(user.user_id, user.role.value, permissions, purpose="otp_verification")
-        return {"preauth_token": preauth_token, "requires_otp": True}
+        
+        # If user submitted OTP on login screen, verify and activate account
+        if otp_code:
+            record = _OTP_STORE.get(user.user_id)
+            if not record:
+                _send_otp(user)
+                resp = {"preauth_token": preauth_token, "requires_otp": True}
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "Previous OTP expired or server was restarted. A new verification code has been sent to your email."
+                )
+            if record["attempts"] >= settings.OTP_MAX_ATTEMPTS:
+                del _OTP_STORE[user.user_id]
+                _send_otp(user)
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Too many failed OTP attempts. A new code has been sent.")
+            if _is_expired(record["expires_at"]):
+                del _OTP_STORE[user.user_id]
+                _send_otp(user)
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "OTP expired. A new code has been sent to your email.")
+            if not hmac.compare_digest(record["code"], otp_code.strip()):
+                record["attempts"] += 1
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Incorrect OTP code.")
+
+            # OTP verified successfully! Activate user
+            del _OTP_STORE[user.user_id]
+            user.status = UserStatusEnum.ACTIVE
+
+            profile = (
+                db.query(DoctorProfile).filter(DoctorProfile.user_id == user.user_id).first()
+                or db.query(NurseProfile).filter(NurseProfile.user_id == user.user_id).first()
+                or db.query(LabProfile).filter(LabProfile.user_id == user.user_id).first()
+                or db.query(PharmacistProfile).filter(PharmacistProfile.user_id == user.user_id).first()
+                or db.query(InsurerProfile).filter(InsurerProfile.user_id == user.user_id).first()
+                or db.query(BloodBankProfile).filter(BloodBankProfile.user_id == user.user_id).first()
+                or db.query(HospitalAdminProfile).filter(HospitalAdminProfile.user_id == user.user_id).first()
+            )
+            if profile and getattr(profile, "verified", False):
+                user.status = UserStatusEnum.ACTIVE
+
+            db.commit()
+            db.refresh(user)
+            _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_OTP_VERIFIED, "pending_verification_activated", client_ip)
+            # Proceed to generate tokens below
+        else:
+            # First submission: ensure an active OTP exists or send one
+            existing_rec = _OTP_STORE.get(user.user_id)
+            if not existing_rec or _is_expired(existing_rec["expires_at"]):
+                _send_otp(user)
+            return {"preauth_token": preauth_token, "requires_otp": True}
         
     if user.status != UserStatusEnum.ACTIVE:
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"Account is {user.status.value.lower()}, cannot log in")
@@ -626,63 +688,83 @@ def login(db: Session, email: str, password: str, otp_code: str | None, client_i
             "preauth_token": create_preauth_token(user.user_id, user.role.value, permissions, purpose="password_change")
         }
 
-    # NEW: All patients must verify with OTP on every login
+    # 1. Patient accounts use Email OTP MFA on login
     if user.role == RoleEnum.PATIENT:
         if not otp_code:
-            # Send OTP and return preauth token for patient login
             send_patient_login_otp(db, user, client_ip)
             permissions = ROLE_PERMISSIONS.get(user.role, [])
-            preauth_token = create_preauth_token(user.user_id, user.role.value, permissions, purpose="patient_login_otp")
-            resp = {"preauth_token": preauth_token, "requires_otp": True}
-            if settings.ENV in ("dev", "development") and not settings.SMTP_ENABLED:
-                resp["dev_otp"] = _OTP_STORE.get(user.user_id, {}).get("code")
-            return resp
+            preauth_token = create_preauth_token(
+                user.user_id, user.role.value, permissions, purpose="patient_login_otp"
+            )
+            return {"preauth_token": preauth_token, "requires_otp": True}
         else:
-            # Verify the provided OTP for patient login
             record = _OTP_STORE.get(user.user_id)
             if not record:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, "No OTP pending for this user")
-
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "No verification code pending for this account. Please request a new code.",
+                )
             if record["attempts"] >= settings.OTP_MAX_ATTEMPTS:
                 del _OTP_STORE[user.user_id]
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Too many OTP attempts — request a new code")
-
-            record["attempts"] += 1
-            if record["code"] != otp_code:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "Too many failed attempts. Request a new verification code.",
+                )
+            if _is_expired(record["expires_at"]):
+                del _OTP_STORE[user.user_id]
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "Verification code expired. Request a new code.",
+                )
+            if not hmac.compare_digest(record["code"], otp_code.strip()):
+                record["attempts"] += 1
                 if record["attempts"] >= settings.OTP_MAX_ATTEMPTS:
                     del _OTP_STORE[user.user_id]
-                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid OTP code")
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        "Too many failed attempts. Request a new verification code.",
+                    )
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid verification code")
 
-            if datetime.now(timezone.utc) > record["expires_at"]:
-                del _OTP_STORE[user.user_id]
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, "OTP expired — request a new code")
-
-            # OTP verified successfully, remove from store
             del _OTP_STORE[user.user_id]
-            _record_auth_event(db, user.user_id, AccessActionEnum.AUTH_OTP_VERIFIED, "patient_login_otp_verified", client_ip)
+            _record_auth_event(
+                db, user.user_id, AccessActionEnum.AUTH_OTP_VERIFIED, "patient_login_otp_verified", client_ip
+            )
 
+    # 2. Staff roles use TOTP MFA (Google Authenticator / Authy)
     requires_mfa = user.role.value in settings.MFA_REQUIRED_ROLES
 
     if requires_mfa and not user.mfa_enabled:
         permissions = ROLE_PERMISSIONS.get(user.role, [])
-        return {
+        raw_secret = None
+        if not user.mfa_secret:
+            raw_secret = _generate_mfa_secret()
+            user.mfa_secret = encrypt_field(raw_secret)
+            db.commit()
+            db.refresh(user)
+        else:
+            raw_secret = decrypt_field(user.mfa_secret)
+
+        provisioning_uri = _build_mfa_provisioning_uri(user.email, raw_secret)
+
+        resp = {
             "requires_mfa_enrollment": True,
-            "preauth_token": create_preauth_token(user.user_id, user.role.value, permissions, purpose="mfa_enrollment")
+            "preauth_token": create_preauth_token(user.user_id, user.role.value, permissions, purpose="mfa_enrollment"),
+            "mfa_provisioning_uri": provisioning_uri,
+            "dev_mfa_secret": raw_secret,
         }
+        return resp
 
     if user.mfa_enabled:
         if not otp_code:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "MFA code required")
         if not user.mfa_secret:
-            # Shouldn't happen — register_user() always provisions a secret
-            # alongside mfa_enabled=True — but fail closed and loudly rather
-            # than silently skipping the check if data ever gets out of sync.
             raise HTTPException(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "MFA is enabled for this account but no authenticator is enrolled — contact support",
             )
 
-        _verify_totp_monotonic(db, user.user_id, decrypt_field(user.mfa_secret), otp_code)
+        _verify_totp_monotonic(db, user.user_id, decrypt_field(user.mfa_secret), otp_code.strip())
 
     permissions = ROLE_PERMISSIONS.get(user.role, [])
     access_token = create_access_token(user.user_id, user.role.value, permissions)
@@ -851,7 +933,7 @@ def resend_otp(db: Session, user_id: str, client_ip: str) -> None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "User is not in pending verification state")
         
     _send_otp(user)
-    _record_auth_event(db, user_id, AccessActionEnum.AUTH_OTP_RESENT, "otp_resent", client_ip)
+    _record_auth_event(db, user_id, AccessActionEnum.AUTH_OTP_SENT, "otp_resent", client_ip)
 
 
 def forgot_password(db: Session, email: str, client_ip: str) -> str | None:

@@ -22,3 +22,20 @@ class AuditLogResponse(BaseModel):
 class AuditStatsResponse(BaseModel):
     action_counts: Dict[str, int]
     total_logs: int
+
+
+class TrustLedgerEntry(BaseModel):
+    id: str
+    tag: str
+    event: str
+    hash: str
+    timestamp: str
+    formatted_text: str
+
+
+class TrustLedgerResponse(BaseModel):
+    entries: list[TrustLedgerEntry]
+    chain_tip_hash: str | None
+    total_entries: int
+    is_tamper_free: bool
+

@@ -1,12 +1,15 @@
 from fastapi import APIRouter, Depends, Query
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.core.rbac import CurrentUser, require_role
 from app.db.session import get_db
-from app.schemas.audit import AuditLogResponse, AuditStatsResponse
+from app.schemas.audit import AuditLogResponse, AuditStatsResponse, TrustLedgerResponse
 from app.services import audit_service
 
 router = APIRouter(prefix="/audit", tags=["Phase 13 — Audit Dashboard"])
+
+optional_bearer = HTTPBearer(auto_error=False)
 
 
 @router.get("/logs", response_model=list[AuditLogResponse])
@@ -34,3 +37,19 @@ def get_audit_stats(
     """
     stats = audit_service.get_audit_stats(db, current_user)
     return AuditStatsResponse(**stats)
+
+
+@router.get("/trust-ledger", response_model=TrustLedgerResponse)
+def get_trust_ledger(
+    limit: int = Query(30, ge=1, le=100),
+    db: Session = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials | None = Depends(optional_bearer),
+):
+    """
+    Live Trust Ledger — dynamic, anonymized stream of cryptographic assertions,
+    hash-chain blocks, and verifiable access log entries (no PHI).
+    Accessible to all dashboards and users.
+    """
+    data = audit_service.get_trust_ledger(db, limit=limit)
+    return TrustLedgerResponse(**data)
+

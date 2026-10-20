@@ -21,7 +21,9 @@ class Settings(BaseSettings):
     # JWT
     JWT_SECRET_KEY: str = Field(min_length=32)
     JWT_ALGORITHM: str = "HS256"
-    MFA_REQUIRED_ROLES: list[str] = ["DOCTOR", "NURSE", "PHARMACIST", "LAB", "HOSPITAL_ADMIN", "ADMIN"]
+    MFA_REQUIRED_ROLES: list[str] = [
+        "DOCTOR", "NURSE", "PHARMACIST", "LAB", "HOSPITAL_ADMIN", "ADMIN", "INSURER", "BLOOD_BANK"
+    ]
     BREAK_GLASS_ALLOWED_ROLES: list[str] = ["DOCTOR"]
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -65,7 +67,7 @@ class Settings(BaseSettings):
 
     # MFA (login TOTP)
     MFA_ISSUER_NAME: str = "CryptCare"
-    MFA_TOTP_VALID_WINDOW: int = 1
+    MFA_TOTP_VALID_WINDOW: int = 2
 
     # Rate limiting
     RATE_LIMIT_LOGIN_MAX: int = 5

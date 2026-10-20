@@ -74,12 +74,19 @@ def test_auth_registration_otp_and_login(client):
     verified_data = verify_resp.json()
     assert verified_data["status"] == "ACTIVE"
 
-    # 3. Login Patient
+    # 3. Login Patient (MFA step 1: request OTP)
     login_resp2 = client.post("/api/v1/auth/login", json=login_payload)
     assert login_resp2.status_code == 200, login_resp2.text
     login_data2 = login_resp2.json()
-    assert "access_token" in login_data2
-    assert "refresh_token" in login_resp2.cookies
+    assert login_data2["requires_otp"] is True
+
+    # MFA step 2: submit OTP
+    patient_otp = _OTP_STORE[user_id]["code"]
+    login_resp3 = client.post("/api/v1/auth/login", json={**login_payload, "otp_code": patient_otp})
+    assert login_resp3.status_code == 200, login_resp3.text
+    login_data3 = login_resp3.json()
+    assert login_data3.get("access_token") is not None
+    assert "refresh_token" in login_resp3.cookies
 
 
 def test_jwt_tampering_fails():

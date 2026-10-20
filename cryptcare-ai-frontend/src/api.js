@@ -109,6 +109,14 @@ export const authService = {
     const res = await api.post('/auth/verify-otp', { user_id, otp_code }, config);
     return res.data;
   },
+  resendOtp: async (preauthToken) => {
+    const config = {};
+    if (preauthToken) {
+      config.headers = { Authorization: `Bearer ${preauthToken}` };
+    }
+    const res = await api.post('/auth/resend-otp', {}, config);
+    return res.data;
+  },
   login: async (email, password, otp_code) => {
     const payload = { email, password };
     if (otp_code) payload.otp_code = otp_code;
@@ -370,6 +378,10 @@ export const auditService = {
   },
   getStats: async () => {
     const res = await api.get('/audit/stats');
+    return res.data;
+  },
+  getTrustLedger: async (limit = 30) => {
+    const res = await api.get(`/audit/trust-ledger?limit=${limit}`);
     return res.data;
   },
 };

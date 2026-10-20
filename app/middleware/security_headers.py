@@ -79,7 +79,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Cross-Origin policies for enhanced security
         response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Resource-Policy"] = "cross-origin" if request.url.path.startswith("/api/") else "same-origin"
         
         # Cache control for sensitive healthcare data
         if request.url.path.startswith("/api/"):

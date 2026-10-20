@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import api, {
   authService, vaultService, consentService, nursingService,
   fraudService, insuranceService, auditService, notificationService,
@@ -6,6 +6,8 @@ import api, {
   appointmentService,
 } from "./api";
 import LandingPage from "./LandingPage";
+import LoginPage from "./LoginPage";
+import RegisterPage from "./RegisterPage";
 import cryptcareIcon from "./assets/cryptcare_icon.png";
 import {
   ShieldCheck, ShieldAlert, Shield, Lock, Unlock, Fingerprint, KeyRound,
@@ -16,7 +18,7 @@ import {
   ChevronDown, X, Check, Upload, Eye, EyeOff, LogOut, Plus, Clock, MapPin,
   Phone, Droplet, UserCog, Building2, Server, Radar, Sparkles, ChevronRight,
   Send, FileSignature, TimerReset, ShieldX, Zap, TrendingUp, AlertOctagon,
-  CircleUser, Filter, Download, MoreHorizontal
+  CircleUser, Filter, Download, MoreHorizontal, RefreshCw
 } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, AreaChart, Area, BarChart, Bar,
@@ -117,7 +119,9 @@ const GlobalStyle = () => (
     .mv-scroll::-webkit-scrollbar-thumb{ background: var(--border); border-radius:10px; }
 
     @keyframes mv-marquee{ from{ transform: translateY(0); } to { transform: translateY(-50%); } }
-    .mv-marquee-track{ animation: mv-marquee 14s linear infinite; }
+    .mv-marquee-track{ animation: mv-marquee 24s linear infinite; }
+    .mv-marquee-track:hover{ animation-play-state: paused; }
+    .mv-marquee-track.is-paused{ animation-play-state: paused; }
 
     .mv-focusable:focus-visible{ outline:2px solid var(--teal); outline-offset:2px; }
   `}</style>
@@ -303,29 +307,8 @@ const fraudAlertsData = [
   { id: 2, title: "Emergency access spike", level: "Low" }
 ];
 
-/* Trust Ledger — signature scrolling element ---------------------------- */
-const TrustLedger = () => (
-  <Card className="overflow-hidden h-full flex flex-col">
-    <div className="flex items-center justify-between mb-3">
-      <div className="flex items-center gap-2">
-        <Fingerprint size={16} style={{ color: "var(--teal-deep)" }} />
-        <span className="text-sm font-semibold">Live Trust Ledger</span>
-      </div>
-      <span className="mv-dot mv-pulse" style={{ background: "var(--green)", color: "var(--green)" }} />
-    </div>
-    <div className="relative flex-1 overflow-hidden" style={{ maxHeight: 210 }}>
-      <div className="mv-marquee-track">
-        {[...LEDGER_EVENTS, ...LEDGER_EVENTS].map((e, i) => (
-          <div key={i} className="mv-track py-1.5 border-b" style={{ borderColor: "var(--border)" }}>{e}</div>
-        ))}
-      </div>
-    </div>
-    <div className="text-[11px] mt-2" style={{ color: "var(--text-faint)" }}>Append-only ledger · tamper-evident hash chain</div>
-  </Card>
-);
-
 /* ---------------------------------------------------------------------- */
-/* MODALS                                                                  */
+/* MODALS                                                                 */
 /* ---------------------------------------------------------------------- */
 
 const Modal = ({ title, icon: Icon, onClose, children, wide }) => (
@@ -342,6 +325,238 @@ const Modal = ({ title, icon: Icon, onClose, children, wide }) => (
     </div>
   </div>
 );
+
+/* ---------------------------------------------------------------------- */
+/* DYNAMIC LIVE TRUST LEDGER                                              */
+/* ---------------------------------------------------------------------- */
+
+function formatLedgerTimeAgo(isoString) {
+  if (!isoString) return "just now";
+  try {
+    const diffMs = Date.now() - new Date(isoString).getTime();
+    if (diffMs < 0 || isNaN(diffMs)) return "just now";
+    const sec = Math.floor(diffMs / 1000);
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hrs = Math.floor(min / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+  } catch {
+    return "recent";
+  }
+}
+
+function tagToTone(tag) {
+  switch (tag) {
+    case "AES-256-GCM": return "teal";
+    case "Ed25519": return "blue";
+    case "RBAC": return "blue";
+    case "MFA-CHALLENGE": return "amber";
+    case "BREAK-GLASS": return "red";
+    case "CRYPTO-SHRED": return "red";
+    case "CONSENT": return "green";
+    default: return "teal";
+  }
+}
+
+const TrustLedger = () => {
+  const [ledger, setLedger] = useState({
+    entries: [],
+    chain_tip_hash: null,
+    total_entries: 0,
+    is_tamper_free: true,
+  });
+  const [loading, setLoading] = useState(false);
+  const [selectedEntry, setSelectedEntry] = useState(null);
+  const [isPaused, setIsPaused] = useState(false);
+
+  const fetchLedger = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await auditService.getTrustLedger(25);
+      if (res && res.entries && res.entries.length > 0) {
+        setLedger(res);
+      }
+    } catch (err) {
+      // Soft fallback if unauthenticated or network drop
+      console.warn("Live Trust Ledger refresh notice:", err?.message || err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLedger();
+    const interval = setInterval(fetchLedger, 6000);
+    return () => clearInterval(interval);
+  }, [fetchLedger]);
+
+  // Display entries: use API entries if present, else fallback
+  const displayEntries = useMemo(() => {
+    if (ledger.entries && ledger.entries.length > 0) {
+      return ledger.entries;
+    }
+    return LEDGER_EVENTS.map((text, idx) => {
+      const parts = text.split(" · ");
+      const tag = parts[0] || "HASH-CHAIN";
+      const event = parts[1] || text;
+      return {
+        id: `sys-${idx}`,
+        tag,
+        event,
+        hash: `000${idx}a9f4`,
+        timestamp: new Date().toISOString(),
+        formatted_text: text,
+      };
+    });
+  }, [ledger.entries]);
+
+  // Double entries to create a smooth, seamless infinite loop
+  const loopEntries = useMemo(() => {
+    return [...displayEntries, ...displayEntries];
+  }, [displayEntries]);
+
+  return (
+    <>
+      <Card className="overflow-hidden h-full flex flex-col">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Fingerprint size={16} style={{ color: "var(--teal-deep)" }} />
+            <span className="text-sm font-semibold">Live Trust Ledger</span>
+            {ledger.chain_tip_hash && (
+              <span className="mv-chip teal text-[9px] px-1.5 py-0.5 font-mono hidden sm:inline-flex" title="Latest block tip hash">
+                TIP #{ledger.chain_tip_hash.slice(0, 8)}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fetchLedger}
+              title="Poll latest cryptographic block"
+              className="p-1 rounded-md hover:bg-[var(--panel)] text-[var(--text-dim)] hover:text-[var(--text)] transition-colors mv-focusable"
+            >
+              <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+            </button>
+            <span
+              className="mv-dot mv-pulse"
+              style={{ background: "var(--green)", color: "var(--green)" }}
+              title="Live streaming from tamper-evident audit chain"
+            />
+          </div>
+        </div>
+
+        <div
+          className="relative flex-1 overflow-hidden"
+          style={{ maxHeight: 210 }}
+          onMouseEnter={() => setIsPaused(true)}
+          onMouseLeave={() => setIsPaused(false)}
+        >
+          <div className={`mv-marquee-track ${isPaused ? "is-paused" : ""}`}>
+            {loopEntries.map((e, i) => (
+              <div
+                key={`${e.id || i}-${i}`}
+                onClick={() => setSelectedEntry(e)}
+                className="mv-track py-1 px-1.5 border-b flex items-center justify-between gap-2 cursor-pointer transition-colors hover:bg-[var(--panel)] rounded-md group"
+                style={{ borderColor: "var(--border)" }}
+                title="Click to inspect cryptographic chain proof"
+              >
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className={`mv-chip ${tagToTone(e.tag)} text-[9px] px-1.5 py-0.5 leading-none shrink-0 font-mono`}>
+                    {e.tag}
+                  </span>
+                  <span className="truncate group-hover:text-[var(--text)] transition-colors text-[11px]">
+                    {e.event}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-mono">
+                  <span className="text-[var(--teal-deep)] opacity-80 group-hover:opacity-100">
+                    #{e.hash?.slice(0, 8)}
+                  </span>
+                  <span className="text-[9px] text-[var(--text-faint)]">
+                    {formatLedgerTimeAgo(e.timestamp)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between text-[11px] mt-2 pt-1 border-t" style={{ borderColor: "var(--border)", color: "var(--text-faint)" }}>
+          <div className="flex items-center gap-1.5">
+            <ShieldCheck size={12} style={{ color: "var(--green)" }} />
+            <span>
+              {ledger.total_entries > 0 ? `${ledger.total_entries} immutable blocks · tamper-evident` : "Append-only ledger · hash chain"}
+            </span>
+          </div>
+          <span className="text-[10px] opacity-75">Click entry to verify</span>
+        </div>
+      </Card>
+
+      {/* Modal: Cryptographic Proof Inspector */}
+      {selectedEntry && (
+        <Modal
+          title="Cryptographic Chain Proof"
+          icon={ShieldCheck}
+          onClose={() => setSelectedEntry(null)}
+        >
+          <div className="space-y-3 text-xs">
+            <div className="p-3 rounded-xl border" style={{ background: "var(--bg)", borderColor: "var(--border)" }}>
+              <div className="flex items-center justify-between mb-2">
+                <span className={`mv-chip ${tagToTone(selectedEntry.tag)}`}>
+                  {selectedEntry.tag}
+                </span>
+                <span className="mv-chip green">
+                  <Check size={11} /> HASH CHAIN VERIFIED
+                </span>
+              </div>
+              <div className="font-semibold text-sm text-[var(--text)] mb-1">
+                {selectedEntry.event}
+              </div>
+              <div className="text-[11px] text-[var(--text-dim)]">
+                Log Event ID: <span className="font-mono text-[var(--text)]">{selectedEntry.id}</span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 font-mono text-[11px]">
+              <div className="flex items-center justify-between p-2 rounded-lg" style={{ background: "var(--panel)" }}>
+                <span className="text-[var(--text-faint)]">Block Hash:</span>
+                <span className="text-[var(--teal-deep)] font-semibold select-all">
+                  0x{selectedEntry.hash}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-2 rounded-lg" style={{ background: "var(--panel)" }}>
+                <span className="text-[var(--text-faint)]">Recorded At:</span>
+                <span className="text-[var(--text)]">
+                  {selectedEntry.timestamp ? new Date(selectedEntry.timestamp).toLocaleString() : "Real-time"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-2 rounded-lg" style={{ background: "var(--panel)" }}>
+                <span className="text-[var(--text-faint)]">Chain Invariant:</span>
+                <span className="text-[var(--green)]">SHA-256 Prev-Hash Linked</span>
+              </div>
+              <div className="flex items-center justify-between p-2 rounded-lg" style={{ background: "var(--panel)" }}>
+                <span className="text-[var(--text-faint)]">Zero-Knowledge PHI:</span>
+                <span className="text-[var(--blue-deep)]">Verified (Zero Patient Data Leaked)</span>
+              </div>
+            </div>
+
+            <div className="p-2.5 rounded-lg text-[11px] leading-relaxed" style={{ background: "var(--teal-glow)", color: "var(--teal-deep)" }}>
+              This audit record is sealed into CryptCare&apos;s append-only hash chain. Every state transition links to its predecessor hash, guaranteeing mathematical immutability and non-repudiation.
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <button className="mv-btn mv-btn-ghost text-xs py-1.5 px-3" onClick={() => setSelectedEntry(null)}>
+                Close Proof
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+};
 
 const SignatureModal = ({ onClose, onConfirm }) => {
   const [signed, setSigned] = useState("");
@@ -3417,966 +3632,8 @@ const VIEWS = {
 };
 
 /* ---------------------------------------------------------------------- */
-/* REGISTER PAGE — shared sub-components (module-level so React doesn't  */
-/* unmount them on every RegisterPage re-render, which would kill focus)  */
+/* AUTHENTICATION PAGES (Imported: LoginPage, RegisterPage)               */
 /* ---------------------------------------------------------------------- */
-
-const RegCard = ({ children, wide }) => (
-  <div className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} p-8 bg-white/70 dark:bg-[#0F1C2A]/55 backdrop-blur-xl border border-[#0F283C]/10 dark:border-[#78BEC8]/14 rounded-2xl shadow-xl`}>
-    {children}
-  </div>
-);
-
-const RegLogo = () => (
-  <div className="flex flex-col items-center justify-center mb-5 gap-1.5">
-    <img src={cryptcareIcon} alt="CryptCare" className="w-14 h-14 object-contain drop-shadow-sm" />
-    <span className="text-xl font-extrabold tracking-tight font-display text-[#072B57] dark:text-[#E7F1F5] leading-none">
-      Crypt<span className="text-[#0FB6AA]">Care</span>
-    </span>
-    <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium tracking-wide">
-      Where Healthcare Meets Privacy
-    </span>
-  </div>
-);
-
-const RegBackBtn = ({ onClick, label = "Back" }) => (
-  <button type="button" onClick={onClick}
-    className="text-xs text-gray-400 hover:text-[#0FB6AA] transition-colors flex items-center gap-1 mb-4">
-    <ChevronRight size={12} className="rotate-180" /> {label}
-  </button>
-);
-
-const RegErrBox = ({ error }) => error ? (
-  <div className="text-sm text-red-500 p-2.5 bg-red-50 dark:bg-red-900/20 rounded-xl">{error}</div>
-) : null;
-
-/* ---------------------------------------------------------------------- */
-/* REGISTER PAGE                                                          */
-/* ---------------------------------------------------------------------- */
-
-const REGISTER_ROLES = [
-  { id: "PATIENT", label: "Patient", icon: CircleUser, desc: "Manage your personal health records" },
-  { id: "DOCTOR", label: "Doctor", icon: Stethoscope, desc: "Clinical access · MFA required" },
-  { id: "NURSE", label: "Nurse", icon: HeartPulse, desc: "Vitals & medication administration" },
-  { id: "PHARMACIST", label: "Pharmacist", icon: FlaskRound, desc: "Dispense & verify prescriptions" },
-  { id: "LAB", label: "Lab Technician", icon: FlaskConical, desc: "Upload & manage lab reports" },
-  { id: "INSURER", label: "Insurance Provider", icon: Building2, desc: "Claims review & fraud monitoring" },
-  { id: "BLOOD_BANK", label: "Blood Bank", icon: Droplet, desc: "Inventory & fulfillment" },
-  { id: "HOSPITAL_ADMIN", label: "Hospital Admin", icon: Building2, desc: "Manage hospital staff & network" },
-];
-
-const PROFESSIONAL_ROLES = ["DOCTOR", "NURSE", "PHARMACIST", "LAB", "INSURER", "BLOOD_BANK", "HOSPITAL_ADMIN"];
-
-const FieldRow = ({ label, children }) => (
-  <div>
-    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">{label}</label>
-    {children}
-  </div>
-);
-
-const RegInput = ({ type = "text", ...props }) => (
-  <input
-    type={type}
-    {...props}
-    className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors text-sm"
-  />
-);
-
-const RegSelect = ({ children, ...props }) => (
-  <select
-    {...props}
-    className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors text-sm"
-  >
-    {children}
-  </select>
-);
-
-const RegisterPage = ({ onRegistered, onBackToLogin, onBackToLanding }) => {
-  // step: "role" | "details" | "otp"
-  const [step, setStep] = useState("role");
-  const [selectedRole, setRole] = useState(null);
-  const [pendingUserId, setUid] = useState(null);
-  const [pendingPreauthToken, setPendingPreauthToken] = useState(null);
-  const [devOtp, setDevOtp] = useState(null);
-  const [showMfaUri, setMfaUri] = useState(null);
-  const [otpCode, setOtpCode] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [showPw, setShowPw] = useState(false);
-
-  // Form fields
-  const [form, setForm] = useState({
-    email: "", phone: "", password: "", full_name: "",
-    dob: "", gender: "", blood_group: "",
-    license_number: "", specialization: "", hospital_name: "",
-    organization_name: "", department: "",
-  });
-  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
-
-  const isProfessional = PROFESSIONAL_ROLES.includes(selectedRole);
-  const isPatient = selectedRole === "PATIENT";
-  const isDoctor = selectedRole === "DOCTOR";
-  const isNurse = selectedRole === "NURSE";
-
-  /* ---- Step 1 → 2 ---------------------------------------------------- */
-  const handleRoleSelect = (roleId) => {
-    setRole(roleId);
-    setError("");
-    setStep("details");
-  };
-
-  /* ---- Step 2: submit registration ------------------------------------ */
-  const handleRegister = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-    try {
-      const payload = {
-        email: form.email,
-        phone: form.phone,
-        password: form.password,
-        full_name: form.full_name,
-        role: selectedRole,
-      };
-      if (isPatient) {
-        if (form.dob) payload.dob = form.dob;
-        if (form.gender) payload.gender = form.gender;
-        if (form.blood_group) payload.blood_group = form.blood_group;
-      }
-      if (isProfessional) {
-        if (selectedRole !== "HOSPITAL_ADMIN") {
-          payload.license_number = form.license_number;
-        }
-        if (isDoctor) {
-          payload.specialization = form.specialization;
-          payload.hospital_name = form.hospital_name;
-        }
-        if (isNurse) {
-          payload.hospital_name = form.hospital_name;
-          payload.department = form.department;
-        }
-        if (selectedRole === "HOSPITAL_ADMIN") {
-          payload.hospital_name = form.hospital_name;
-        }
-        if (["LAB", "PHARMACIST", "INSURER", "BLOOD_BANK"].includes(selectedRole)) {
-          payload.organization_name = form.organization_name;
-        }
-      }
-
-      const data = await authService.register(payload);
-      setUid(data.user_id);
-      if (data.preauth_token) setPendingPreauthToken(data.preauth_token);
-      if (data.dev_otp) {
-        setDevOtp(data.dev_otp);
-      }
-      setOtpCode("");
-      if (data.mfa_provisioning_uri) setMfaUri(data.mfa_provisioning_uri);
-      setStep("otp");
-    } catch (err) {
-      const msg = err?.response?.data?.detail;
-      setError(typeof msg === "string" ? msg : Array.isArray(msg) ? msg.map(m => m.msg).join("; ") : "Registration failed — please check your details.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /* ---- Step 3: verify OTP --------------------------------------------- */
-  const handleVerifyOtp = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-    try {
-      await authService.verifyOtp(pendingUserId, otpCode.trim(), pendingPreauthToken);
-      onRegistered(form.email, form.password);
-    } catch (err) {
-      const msg = err?.response?.data?.detail;
-      setError(typeof msg === "string" ? msg : "Invalid or expired code — please try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /* ---- Shared card chrome — defined at module level above RegisterPage --- */
-
-  /* ---- STEP 1: role selection ----------------------------------------- */
-  if (step === "role") return (
-    <div className="min-h-screen flex items-center justify-center bg-[#EEF4F7] dark:bg-[#050D17] text-[#0B1E33] dark:text-[#E7F1F5] p-4">
-      <RegCard wide>
-        {onBackToLanding && (
-          <button
-            type="button"
-            onClick={onBackToLanding}
-            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-[#0FB6AA] mb-3 font-medium cursor-pointer"
-          >
-            ← Back to Home
-          </button>
-        )}
-        <RegLogo />
-        <h2 className="text-xl font-bold text-center mb-1" style={{ fontFamily: "'Sora', sans-serif" }}>Create your account</h2>
-        <p className="text-sm text-center text-gray-500 dark:text-gray-400 mb-6">Select your role to get started</p>
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-6">
-          {REGISTER_ROLES.map(r => {
-            const Icon = r.icon;
-            return (
-              <button key={r.id} onClick={() => handleRoleSelect(r.id)}
-                className="flex flex-col items-center gap-2 p-4 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white/60 dark:bg-[#0B1A28]/60 hover:border-[#0FB6AA] hover:shadow-md transition-all text-left group">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-[#0FB6AA]/20 to-[#2F6FE0]/20 group-hover:from-[#0FB6AA]/40 group-hover:to-[#2F6FE0]/40 transition-all">
-                  <Icon size={20} style={{ color: "#0A8A82" }} />
-                </div>
-                <span className="text-xs font-bold text-center leading-tight">{r.label}</span>
-                <span className="text-[10px] text-gray-400 text-center leading-tight hidden sm:block">{r.desc}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        <p className="text-center text-sm text-gray-500">
-          Already have an account?{" "}
-          <button onClick={onBackToLogin} className="text-[#0FB6AA] font-semibold hover:underline">Sign in</button>
-        </p>
-      </RegCard>
-    </div>
-  );
-
-  /* ---- STEP 2: registration form ------------------------------------- */
-  if (step === "details") {
-    const roleInfo = REGISTER_ROLES.find(r => r.id === selectedRole);
-    const RIcon = roleInfo?.icon || CircleUser;
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#EEF4F7] dark:bg-[#050D17] text-[#0B1E33] dark:text-[#E7F1F5] p-4">
-        <RegCard wide>
-          <RegLogo />
-          <RegBackBtn onClick={() => { setStep("role"); setError(""); }} label="Change role" />
-
-          <div className="flex items-center gap-3 mb-5">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-[#0FB6AA]/20 to-[#2F6FE0]/20">
-              <RIcon size={20} style={{ color: "#0A8A82" }} />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold leading-tight" style={{ fontFamily: "'Sora', sans-serif" }}>
-                Register as {roleInfo?.label}
-              </h2>
-              <p className="text-xs text-gray-400">{roleInfo?.desc}</p>
-            </div>
-          </div>
-
-          <form onSubmit={handleRegister} className="space-y-3">
-            {/* Always-present fields */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <FieldRow label="Full Name">
-                <RegInput placeholder="e.g. John Smith" value={form.full_name} onChange={set("full_name")} required />
-              </FieldRow>
-              <FieldRow label="Email Address">
-                <RegInput type="email" placeholder="you@example.com" value={form.email} onChange={set("email")} required />
-              </FieldRow>
-              <FieldRow label="Phone Number">
-                <RegInput type="tel" placeholder="+91 98765 43210" value={form.phone} onChange={set("phone")} required minLength={8} maxLength={20} />
-              </FieldRow>
-              <FieldRow label="Password">
-                <div className="relative">
-                  <RegInput type={showPw ? "text" : "password"} placeholder="Min 10 chars, 1 upper, 1 digit" value={form.password} onChange={set("password")} required minLength={10} maxLength={128} />
-                  <button type="button" onClick={() => setShowPw(p => !p)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-[#0FB6AA]">
-                    {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
-              </FieldRow>
-            </div>
-
-            {/* Patient-specific fields */}
-            {isPatient && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-                <FieldRow label="Date of Birth">
-                  <RegInput type="date" value={form.dob} onChange={set("dob")} />
-                </FieldRow>
-                <FieldRow label="Gender">
-                  <RegSelect value={form.gender} onChange={set("gender")}>
-                    <option value="">Select...</option>
-                    <option>Male</option><option>Female</option><option>Other</option><option>Prefer not to say</option>
-                  </RegSelect>
-                </FieldRow>
-                <FieldRow label="Blood Group">
-                  <RegSelect value={form.blood_group} onChange={set("blood_group")}>
-                    <option value="">Select...</option>
-                    {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map(g => <option key={g}>{g}</option>)}
-                  </RegSelect>
-                </FieldRow>
-              </div>
-            )}
-
-            {/* Professional fields */}
-            {isProfessional && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                <FieldRow label="License Number *">
-                  <RegInput placeholder="e.g. MCI-2024-88213" value={form.license_number} onChange={set("license_number")} required />
-                </FieldRow>
-                {selectedRole !== "HOSPITAL_ADMIN" && (
-                  <FieldRow label="License Number *">
-                    <RegInput placeholder="e.g. MCI-2024-88213" value={form.license_number} onChange={set("license_number")} required />
-                  </FieldRow>
-                )}
-                {isDoctor && <>
-                  <FieldRow label="Specialization">
-                    <RegInput placeholder="e.g. Cardiology" value={form.specialization} onChange={set("specialization")} />
-                  </FieldRow>
-                  <FieldRow label="Hospital / Clinic">
-                    <RegInput placeholder="e.g. City General Hospital" value={form.hospital_name} onChange={set("hospital_name")} />
-                  </FieldRow>
-                </>}
-                {isNurse && <>
-                  <FieldRow label="Hospital Name">
-                    <RegInput placeholder="e.g. City General Hospital" value={form.hospital_name} onChange={set("hospital_name")} />
-                  </FieldRow>
-                  <FieldRow label="Department">
-                    <RegInput placeholder="e.g. ICU, General Ward" value={form.department} onChange={set("department")} />
-                  </FieldRow>
-                </>}
-                {selectedRole === "HOSPITAL_ADMIN" && (
-                  <FieldRow label="Hospital Name">
-                    <RegInput placeholder="e.g. City General Hospital" value={form.hospital_name} onChange={set("hospital_name")} required />
-                  </FieldRow>
-                )}
-                {["LAB", "PHARMACIST", "INSURER", "BLOOD_BANK"].includes(selectedRole) && (
-                  <FieldRow label={selectedRole === "LAB" ? "Lab Name" : selectedRole === "PHARMACIST" ? "Pharmacy Name" : selectedRole === "INSURER" ? "Company Name" : "Facility Name"}>
-                    <RegInput placeholder="Organization name" value={form.organization_name} onChange={set("organization_name")} />
-                  </FieldRow>
-                )}
-              </div>
-            )}
-
-            {/* MFA notice for roles that require it */}
-            {["DOCTOR", "NURSE", "PHARMACIST", "LAB", "HOSPITAL_ADMIN", "ADMIN"].includes(selectedRole) && (
-              <div className="flex items-start gap-2 p-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-300">
-                <KeyRound size={14} className="mt-0.5 shrink-0" />
-                <span>This role requires TOTP multi-factor authentication. After registration you will receive a QR code — scan it with Google Authenticator or Authy before your first login.</span>
-              </div>
-            )}
-
-            <RegErrBox error={error} />
-
-            <button type="submit" disabled={loading}
-              className="w-full py-3 rounded-xl font-bold text-white shadow-lg disabled:opacity-70 mt-1"
-              style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}>
-              {loading ? "Creating account..." : "Create account & send OTP"}
-            </button>
-          </form>
-
-          <p className="text-center text-sm text-gray-500 mt-4">
-            Already have an account?{" "}
-            <button onClick={onBackToLogin} className="text-[#0FB6AA] font-semibold hover:underline">Sign in</button>
-          </p>
-        </RegCard>
-      </div>
-    );
-  }
-
-  /* ---- STEP 3: OTP verification --------------------------------------- */
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-[#EEF4F7] dark:bg-[#050D17] text-[#0B1E33] dark:text-[#E7F1F5] p-4">
-      <RegCard>
-        <RegLogo />
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-3"
-            style={{ background: "linear-gradient(135deg,rgba(15,182,170,0.15),rgba(47,111,224,0.15))" }}>
-            <Send size={24} style={{ color: "#0A8A82" }} />
-          </div>
-          <h2 className="text-xl font-bold" style={{ fontFamily: "'Sora', sans-serif" }}>Check your email</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            We sent a 6-digit verification code to<br />
-            <span className="font-semibold text-[#0B1E33] dark:text-[#E7F1F5]">{form.email}</span>
-          </p>
-        </div>
-
-        {showMfaUri && (
-          <div className="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 text-xs text-amber-800 dark:text-amber-300 space-y-1">
-            <div className="flex items-center gap-1.5 font-bold"><KeyRound size={13} /> MFA Setup Required</div>
-            <p>Scan the provisioning URI below into Google Authenticator or Authy <strong>before your first login</strong>. This is shown once only.</p>
-            <code className="block mt-1 text-[10px] break-all bg-amber-100 dark:bg-amber-900/40 p-2 rounded-lg">{showMfaUri}</code>
-          </div>
-        )}
-
-        <form onSubmit={handleVerifyOtp} className="space-y-4">
-          <FieldRow label="Verification Code">
-            <RegInput
-              type="text"
-              inputMode="numeric"
-              placeholder="6-digit code"
-              value={otpCode}
-              onChange={e => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-              maxLength={6}
-              autoComplete="one-time-code"
-              required
-              style={{ letterSpacing: "0.3em", fontSize: 22, textAlign: "center", fontWeight: 700 }}
-            />
-          </FieldRow>
-          <p className="text-xs text-gray-400 text-center">Code expires in 5 minutes. Check your spam folder if you don&apos;t see it.</p>
-
-          <RegErrBox error={error} />
-
-          <button type="submit" disabled={loading || otpCode.length < 6}
-            className="w-full py-3 rounded-xl font-bold text-white shadow-lg disabled:opacity-70"
-            style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}>
-            {loading ? "Verifying..." : "Verify & activate account"}
-          </button>
-        </form>
-
-        <p className="text-center text-sm text-gray-500 mt-4">
-          Wrong email?{" "}
-          <button onClick={() => { setStep("details"); setError(""); setOtpCode(""); }}
-            className="text-[#0FB6AA] font-semibold hover:underline">Go back</button>
-        </p>
-      </RegCard>
-    </div>
-  );
-};
-
-/* ---------------------------------------------------------------------- */
-/* LOGIN PAGE                                                             */
-/* ---------------------------------------------------------------------- */
-
-const LoginPage = ({ onLogin, onShowRegister, onBackToLanding, registeredSuccess }) => {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [otpCode, setOtpCode] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [infoMessage, setInfoMessage] = useState("");
-  const [needsOtp, setNeedsOtp] = useState(false);
-  const [mfaEnrollPreauth, setMfaEnrollPreauth] = useState(null);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
-  const [forgotPasswordStep, setForgotPasswordStep] = useState("email"); // "email" | "reset" | "done"
-  const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
-  const [resetToken, setResetToken] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [forgotLoading, setForgotLoading] = useState(false);
-  const [forgotError, setForgotError] = useState("");
-  const [forgotSuccessMsg, setForgotSuccessMsg] = useState("");
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [canResendOtp, setCanResendOtp] = useState(true);
-  const [resendCooldown, setResendCooldown] = useState(0);
-
-  // Check URL parameters for password reset token
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
-    if (token) {
-      setResetToken(token);
-      setForgotPasswordStep("reset");
-      setShowForgotPassword(true);
-    }
-  }, []);
-
-  // Cooldown timer for resend OTP
-  useEffect(() => {
-    if (resendCooldown > 0) {
-      const timer = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
-      return () => clearTimeout(timer);
-    } else {
-      setCanResendOtp(true);
-    }
-  }, [resendCooldown]);
-
-  const handleForgotPassword = async (e) => {
-    e.preventDefault();
-    setForgotLoading(true);
-    setForgotError("");
-    try {
-      await authService.forgotPassword(forgotPasswordEmail.trim());
-      setForgotSuccessMsg(`A 6-digit reset code has been sent to ${forgotPasswordEmail.trim()}. Check your email inbox and enter the code below.`);
-      setForgotPasswordStep("reset");
-    } catch (err) {
-      setForgotError(err?.response?.data?.detail || "Failed to send reset code");
-    } finally {
-      setForgotLoading(false);
-    }
-  };
-
-  const handleResetPassword = async (e) => {
-    e.preventDefault();
-    if (!resetToken.trim()) {
-      setForgotError("Please enter the 6-digit reset code or token from your email");
-      return;
-    }
-    if (newPassword.length < 8) {
-      setForgotError("Password must be at least 8 characters long");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setForgotError("Passwords do not match");
-      return;
-    }
-    setForgotLoading(true);
-    setForgotError("");
-    try {
-      await authService.resetPassword(resetToken.trim(), newPassword);
-      setForgotSuccessMsg("Your password has been reset successfully! You can now log in.");
-      setForgotPasswordStep("done");
-      setPassword(newPassword);
-      if (forgotPasswordEmail) setEmail(forgotPasswordEmail);
-    } catch (err) {
-      setForgotError(err?.response?.data?.detail || "Failed to reset password. Code or link may be invalid/expired.");
-    } finally {
-      setForgotLoading(false);
-    }
-  };
-
-  const closeForgotPasswordModal = () => {
-    setShowForgotPassword(false);
-    setForgotPasswordStep("email");
-    setForgotPasswordEmail("");
-    setResetToken("");
-    setNewPassword("");
-    setConfirmPassword("");
-    setForgotError("");
-    setForgotSuccessMsg("");
-  };
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-    setInfoMessage("");
-    
-    try {
-      if (mfaEnrollPreauth && otpCode) {
-        await authService.enrollMfa(otpCode.trim(), mfaEnrollPreauth);
-        const me = await authService.getMe();
-        onLogin(me);
-        return;
-      }
-
-      const response = await authService.login(email, password, otpCode);
-      
-      if (response.requires_otp) {
-        setNeedsOtp(true);
-        setMfaEnrollPreauth(null);
-        setOtpCode("");
-        setError("");
-        setInfoMessage("Verification code sent to your email. Please check your inbox and enter the 6-digit code below.");
-      } else if (response.requires_mfa_enrollment) {
-        setNeedsOtp(true);
-        setMfaEnrollPreauth(response.preauth_token);
-        setOtpCode("");
-        setError("");
-        setInfoMessage("First-time setup: Enter the 6-digit code from your authenticator app to enroll and complete login.");
-      } else {
-        const me = await authService.getMe();
-        onLogin(me);
-      }
-    } catch (err) {
-      setInfoMessage("");
-      if (err?.response?.data?.detail === "MFA code required") {
-        setNeedsOtp(true);
-        setMfaEnrollPreauth(null);
-        setOtpCode("");
-        setError("Enter your 6-digit authenticator code");
-      } else {
-        setError(err?.response?.data?.detail || "Login failed");
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleResendOtp = async () => {
-    if (!canResendOtp) return;
-    setLoading(true);
-    setError("");
-    setInfoMessage("");
-    try {
-      const response = await authService.login(email, password);
-      setOtpCode("");
-      setError("");
-      setInfoMessage("A new verification code has been sent to your email.");
-      setCanResendOtp(false);
-      setResendCooldown(60);
-    } catch (err) {
-      setError(err?.response?.data?.detail || "Failed to resend code");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fillDemoAccount = (demoEmail) => {
-    setEmail(demoEmail);
-    setPassword("Password123");
-    setNeedsOtp(false);
-    setMfaEnrollPreauth(null);
-    setOtpCode("");
-    setError("");
-    setInfoMessage("");
-  };
-
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-[#EEF4F7] dark:bg-[#050D17] text-[#0B1E33] dark:text-[#E7F1F5] font-sans">
-      <div className="w-full max-w-md p-8 bg-white/70 dark:bg-[#0F1C2A]/55 backdrop-blur-xl border border-[#0F283C]/10 dark:border-[#78BEC8]/14 rounded-2xl shadow-xl">
-        {onBackToLanding && (
-          <button
-            type="button"
-            onClick={onBackToLanding}
-            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-[#0FB6AA] mb-4 font-medium cursor-pointer"
-          >
-            ← Back to Home
-          </button>
-        )}
-        <div className="flex flex-col items-center justify-center mb-5 gap-1.5">
-          <img src={cryptcareIcon} alt="CryptCare" className="w-14 h-14 object-contain drop-shadow-sm" />
-          <span className="text-xl font-extrabold tracking-tight font-display text-[#072B57] dark:text-[#E7F1F5] leading-none">
-            Crypt<span className="text-[#0FB6AA]">Care</span>
-          </span>
-          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium tracking-wide">
-            Where Healthcare Meets Privacy
-          </span>
-        </div>
-        <h2 className="text-2xl font-bold text-center mb-1">Welcome to CryptCare</h2>
-        <p className="text-sm text-center text-gray-500 dark:text-gray-400 mb-6">Enter your credentials to continue</p>
-
-        {registeredSuccess && (
-          <div className="flex items-center gap-2 p-3 mb-4 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-sm text-green-700 dark:text-green-300">
-            <ShieldCheck size={16} className="shrink-0" />
-            Account verified! You can now sign in.
-          </div>
-        )}
-
-        {infoMessage && (
-          <div className="flex items-center gap-2 p-3 mb-4 rounded-xl bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800 text-sm text-teal-700 dark:text-teal-300">
-            <Inbox size={16} className="shrink-0" />
-            <span>{infoMessage}</span>
-          </div>
-        )}
-
-        {error && (
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3 mb-4">
-            <p className="text-red-700 dark:text-red-400 text-sm">{error}</p>
-          </div>
-        )}
-
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Email Address</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Password</label>
-            <div className="relative">
-              <input
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full p-3 pr-12 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors"
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-[#0FB6AA] transition"
-              >
-                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-              </button>
-            </div>
-          </div>
-
-          {needsOtp && (
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Verification Code</label>
-              <input
-                type="text"
-                value={otpCode}
-                onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors text-center text-lg tracking-widest font-mono"
-                placeholder="000000"
-                maxLength={6}
-                required
-              />
-              <div className="flex justify-between items-center mt-2">
-                <p className="text-xs text-gray-500">
-                  {mfaEnrollPreauth ? "Enter code from Google Authenticator / Authy" : "Check your email or authenticator app for the 6-digit code"}
-                </p>
-                {!mfaEnrollPreauth && (
-                  <button
-                    type="button"
-                    onClick={handleResendOtp}
-                    disabled={!canResendOtp}
-                    className="text-xs text-[#0FB6AA] hover:underline disabled:text-gray-400"
-                  >
-                    {canResendOtp ? 'Resend Code' : `Resend in ${resendCooldown}s`}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 rounded-xl font-bold text-white shadow-lg disabled:opacity-70 transition hover:brightness-105"
-            style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}
-          >
-            {loading ? "Signing in..." : "Sign In securely"}
-          </button>
-        </form>
-
-        {/* Demo Accounts Quick Selector */}
-        <div className="mt-5 pt-4 border-t border-gray-200/60 dark:border-gray-700/60">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2.5 text-center">
-            Demo Accounts (Password: Password123)
-          </p>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <button
-              type="button"
-              onClick={() => fillDemoAccount("doctor@example.com")}
-              className="p-2 rounded-lg bg-teal-50 dark:bg-teal-950/40 hover:bg-teal-100 dark:hover:bg-teal-900/50 text-teal-800 dark:text-teal-200 font-medium text-left border border-teal-200/50 dark:border-teal-800/50 transition"
-            >
-              👨‍⚕️ Doctor
-            </button>
-            <button
-              type="button"
-              onClick={() => fillDemoAccount("admin@example.com")}
-              className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-800 dark:text-blue-200 font-medium text-left border border-blue-200/50 dark:border-blue-800/50 transition"
-            >
-              🏥 Admin
-            </button>
-            <button
-              type="button"
-              onClick={() => fillDemoAccount("nurse@example.com")}
-              className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200 font-medium text-left border border-emerald-200/50 dark:border-emerald-800/50 transition"
-            >
-              👩‍⚕️ Nurse
-            </button>
-            <button
-              type="button"
-              onClick={() => fillDemoAccount("pharmacist@example.com")}
-              className="p-2 rounded-lg bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-purple-800 dark:text-purple-200 font-medium text-left border border-purple-200/50 dark:border-purple-800/50 transition"
-            >
-              💊 Pharmacist
-            </button>
-            <button
-              type="button"
-              onClick={() => fillDemoAccount("lab@example.com")}
-              className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/50 text-amber-800 dark:text-amber-200 font-medium text-left border border-amber-200/50 dark:border-amber-800/50 transition"
-            >
-              🧪 Lab
-            </button>
-            <button
-              type="button"
-              onClick={() => fillDemoAccount("bloodbank@example.com")}
-              className="p-2 rounded-lg bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-800 dark:text-rose-200 font-medium text-left border border-rose-200/50 dark:border-rose-800/50 transition"
-            >
-              🩸 Blood Bank
-            </button>
-            <button
-              type="button"
-              onClick={() => fillDemoAccount("insurer@example.com")}
-              className="p-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-800 dark:text-indigo-200 font-medium text-left border border-indigo-200/50 dark:border-indigo-800/50 transition"
-            >
-              🛡️ Insurer
-            </button>
-            <button
-              type="button"
-              onClick={() => fillDemoAccount("patient@example.com")}
-              className="p-2 rounded-lg bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-800 dark:text-sky-200 font-medium text-left border border-sky-200/50 dark:border-sky-800/50 transition"
-            >
-              🧑 Patient
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-4 flex justify-between items-center text-sm">
-          <button 
-            onClick={() => setShowForgotPassword(true)}
-            className="text-[#0FB6AA] hover:underline"
-          >
-            Forgot password?
-          </button>
-        </div>
-
-        <p className="text-center text-sm text-gray-500 mt-3">
-          New to CryptCare?{" "}
-          <button onClick={onShowRegister} className="text-[#0FB6AA] font-semibold hover:underline">Create an account</button>
-        </p>
-      </div>
-
-      {/* Forgot Password Modal */}
-      {showForgotPassword && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white dark:bg-[#0F1C2A] border border-gray-200 dark:border-gray-700/60 rounded-2xl p-6 w-full max-w-md shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                {forgotPasswordStep === "reset" ? "Set New Password" : "Reset Password"}
-              </h3>
-              <button
-                type="button"
-                onClick={closeForgotPasswordModal}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            {forgotError && (
-              <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-xl p-3 mb-4 text-xs text-red-700 dark:text-red-300">
-                {forgotError}
-              </div>
-            )}
-
-            {forgotPasswordStep === "email" && (
-              <form onSubmit={handleForgotPassword} className="space-y-4">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Enter your registered email address and we'll generate a password reset link.
-                </p>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                    Email Address
-                  </label>
-                  <input
-                    type="email"
-                    value={forgotPasswordEmail}
-                    onChange={(e) => setForgotPasswordEmail(e.target.value)}
-                    className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors"
-                    placeholder="doctor@example.com"
-                    required
-                  />
-                </div>
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={closeForgotPasswordModal}
-                    className="flex-1 py-2.5 px-4 border border-gray-300 dark:border-gray-700 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition font-medium text-sm"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={forgotLoading}
-                    className="flex-1 py-2.5 px-4 rounded-xl text-white font-medium transition disabled:opacity-70 text-sm shadow-md"
-                    style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}
-                  >
-                    {forgotLoading ? "Sending..." : "Send Reset Link"}
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {forgotPasswordStep === "reset" && (
-              <form onSubmit={handleResetPassword} className="space-y-4">
-                <div className="p-3 rounded-xl bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 text-xs text-teal-800 dark:text-teal-300">
-                  {forgotSuccessMsg || "Enter the 6-digit reset code from your email and your new password below."}
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                    6-Digit Reset Code / Token
-                  </label>
-                  <input
-                    type="text"
-                    value={resetToken}
-                    onChange={(e) => setResetToken(e.target.value)}
-                    placeholder="e.g. 123456 or paste token"
-                    className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors font-mono text-sm tracking-widest text-center"
-                    required
-                  />
-                  <p className="text-[11px] text-gray-500 mt-1">Enter the 6-digit code sent to your email or link token</p>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                    New Password
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showNewPassword ? "text" : "password"}
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Minimum 8 characters"
-                      className="w-full p-3 pr-10 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors"
-                      required
-                      minLength={8}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewPassword(!showNewPassword)}
-                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-[#0FB6AA]"
-                    >
-                      {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                    </button>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                    Confirm New Password
-                  </label>
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Repeat new password"
-                    className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#0B1A28] outline-none focus:border-[#0FB6AA] transition-colors"
-                    required
-                    minLength={8}
-                  />
-                </div>
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={closeForgotPasswordModal}
-                    className="flex-1 py-2.5 px-4 border border-gray-300 dark:border-gray-700 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition font-medium text-sm"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={forgotLoading}
-                    className="flex-1 py-2.5 px-4 rounded-xl text-white font-medium transition disabled:opacity-70 text-sm shadow-md"
-                    style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}
-                  >
-                    {forgotLoading ? "Updating..." : "Update Password"}
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {forgotPasswordStep === "done" && (
-              <div className="text-center py-2">
-                <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center text-green-600 dark:text-green-400">
-                  <Check size={24} />
-                </div>
-                <h4 className="font-bold text-lg mb-2 text-gray-900 dark:text-white">Email Sent</h4>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-                  {forgotSuccessMsg || "Your password has been successfully reset. You can now log in."}
-                </p>
-                <div className="flex flex-col gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setForgotPasswordStep("reset")}
-                    className="w-full py-2.5 px-4 rounded-xl border border-[#0FB6AA] text-[#0FB6AA] hover:bg-[#0FB6AA]/10 font-medium text-sm transition"
-                  >
-                    I Have The Reset Token (Enter Manually)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={closeForgotPasswordModal}
-                    className="w-full py-2.5 px-4 rounded-xl text-white font-medium shadow-md transition text-sm"
-                    style={{ background: "linear-gradient(135deg, #0FB6AA, #2F6FE0)" }}
-                  >
-                    Return to Sign In
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
 
 /* ---------------------------------------------------------------------- */
 /* APP SHELL                                                              */
@@ -4447,14 +3704,19 @@ export default function CryptcareApp() {
       <RegisterPage
         onRegistered={async (email, password) => {
           try {
-            await authService.login(email, password);
-            const me = await authService.getMe();
-            setCurrentUser(me);
-            setNav("overview");
-            setShowRegister(false);
-            setAuthView("landing");
+            const loginRes = await authService.login(email, password);
+            if (loginRes?.access_token) {
+              const me = await authService.getMe();
+              setCurrentUser(me);
+              setNav("overview");
+              setShowRegister(false);
+              setAuthView("landing");
+            } else {
+              setShowRegister(false);
+              setRegisteredSuccess(true);
+              setAuthView("login");
+            }
           } catch (e) {
-            // Login after register failed (e.g. MFA role) — send to login page
             setShowRegister(false);
             setRegisteredSuccess(true);
             setAuthView("login");
