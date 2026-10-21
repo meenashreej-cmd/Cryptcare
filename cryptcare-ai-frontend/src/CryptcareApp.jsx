@@ -632,6 +632,164 @@ const UploadModal = ({ onClose }) => {
   );
 };
 
+const UploadPrescriptionModal = ({ onClose, currentUser }) => {
+  const [uploading, setUploading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [prescriptionNote, setPrescriptionNote] = useState("");
+  const fileInputRef = useRef(null);
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Validate file type
+      const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
+      if (!validTypes.includes(file.type)) {
+        alert('Please upload a valid image (JPG, PNG) or PDF file');
+        return;
+      }
+      // Validate file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        alert('File size must be less than 5MB');
+        return;
+      }
+      setSelectedFile(file);
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile) {
+      alert('Please select a file to upload');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('patient_id', currentUser.user_id);
+      formData.append('note', prescriptionNote || 'Old prescription upload');
+      formData.append('category', 'PRESCRIPTION');
+
+      console.log('Uploading prescription:', {
+        filename: selectedFile.name,
+        size: selectedFile.size,
+        patient_id: currentUser.user_id,
+      });
+
+      // Call API to upload
+      const response = await api.post('/vault/upload-document', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      console.log('Upload successful:', response.data);
+      alert('✅ Prescription uploaded successfully and encrypted!');
+      onClose();
+      window.location.reload(); // Refresh to show new document
+    } catch (error) {
+      console.error('Upload failed:', error);
+      const errorMsg = error.response?.data?.detail || error.message || 'Unknown error';
+      alert(`❌ Failed to upload prescription: ${errorMsg}\n\nPlease check the console for more details.`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <Modal title="Upload Old Prescription" icon={Pill} onClose={onClose}>
+      <div className="space-y-4">
+        <div className="mv-chip teal mb-3">
+          <Lock size={11} /> Files are encrypted with AES-256-GCM before storage
+        </div>
+
+        <div>
+          <label className="text-xs font-semibold mb-2 block" style={{ color: "var(--text-faint)" }}>
+            PRESCRIPTION NOTES (Optional)
+          </label>
+          <input
+            type="text"
+            className="mv-input mv-focusable"
+            placeholder="e.g., Doctor's name, date, or prescription details"
+            value={prescriptionNote}
+            onChange={(e) => setPrescriptionNote(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label className="text-xs font-semibold mb-2 block" style={{ color: "var(--text-faint)" }}>
+            UPLOAD FILE
+          </label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/jpg,image/png,application/pdf"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+          <div
+            className="mv-glass rounded-xl p-6 text-center cursor-pointer hover:border-[var(--teal)] transition-colors"
+            style={{ borderStyle: "dashed", borderWidth: "2px", borderColor: "var(--border)" }}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {selectedFile ? (
+              <div className="flex items-center justify-center gap-3">
+                <FileText size={24} style={{ color: "var(--teal-deep)" }} />
+                <div className="text-left">
+                  <p className="text-sm font-semibold">{selectedFile.name}</p>
+                  <p className="text-xs" style={{ color: "var(--text-faint)" }}>
+                    {(selectedFile.size / 1024).toFixed(2)} KB
+                  </p>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedFile(null);
+                  }}
+                  className="ml-auto"
+                >
+                  <X size={16} style={{ color: "var(--text-dim)" }} />
+                </button>
+              </div>
+            ) : (
+              <>
+                <Upload size={32} className="mx-auto mb-2" style={{ color: "var(--teal-deep)" }} />
+                <p className="text-sm font-semibold">Click to upload prescription</p>
+                <p className="text-xs mt-1" style={{ color: "var(--text-faint)" }}>
+                  Supported: JPG, PNG, PDF (Max 5MB)
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex gap-2 justify-end mt-4">
+          <button className="mv-btn mv-btn-ghost" onClick={onClose} disabled={uploading}>
+            Cancel
+          </button>
+          <button
+            className="mv-btn mv-btn-primary flex items-center gap-2"
+            onClick={handleUpload}
+            disabled={uploading || !selectedFile}
+          >
+            {uploading ? (
+              <>
+                <div className="animate-spin"><Upload size={14} /></div>
+                Uploading...
+              </>
+            ) : (
+              <>
+                <Lock size={14} />
+                Encrypt & Upload
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
 const BreakGlassModal = ({ onClose, onConfirm }) => {
   const [reason, setReason] = useState("");
   return (
@@ -678,13 +836,13 @@ const PatientOverview = ({ go, currentUser }) => {
   const { data: timelineRaw } = useApi(() => consentService.getTimeline(), [pid]);
   const { data: appointmentData } = useApi(() => appointmentService.getUpcomingAppointments(7), [pid]);
   const { data: appointmentStats } = useApi(() => appointmentService.getAppointmentStats(), [pid]);
-  
+
   const activeRx = (rxRaw || []).filter(r => r.status === "ACTIVE");
   const pendingConsents = (consentRaw?.consents || []).filter(c => c.status === "PENDING");
   const alerts = alertRaw?.alerts || [];
   const events = (timelineRaw?.events || []).slice(0, 3);
   const upcomingAppointments = (appointmentData?.appointments || []).slice(0, 3);
-  
+
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -747,6 +905,7 @@ const PatientOverview = ({ go, currentUser }) => {
 const VaultView = ({ currentUser }) => {
   const pid = currentUser?.user_id;
   const [filter, setFilter] = useState("All");
+  const [showUpload, setShowUpload] = useState(false);
   const { data: rxData, loading: rxL } = useApi(() => vaultService.getPrescriptions(pid), [pid]);
   const { data: allergyData, loading: aL } = useApi(() => vaultService.getAllergies(pid), [pid]);
   const { data: vacData, loading: vL } = useApi(() => vaultService.getVaccinations(pid), [pid]);
@@ -760,7 +919,18 @@ const VaultView = ({ currentUser }) => {
   const filtered = filter === "All" ? allRecords : allRecords.filter(r => r.cat === filter);
   return (
     <div className="space-y-4">
-      <SectionHeader icon={FolderLock} title="Digital Health Vault" desc="All your encrypted health records" />
+      <div className="flex items-center justify-between">
+        <SectionHeader icon={FolderLock} title="Digital Health Vault" desc="All your encrypted health records" />
+        <button
+          onClick={() => setShowUpload(true)}
+          className="mv-btn mv-btn-primary flex items-center gap-2"
+          title="Upload Old Prescription"
+        >
+          <Upload size={16} />
+          <Pill size={16} />
+          <span className="hidden sm:inline">Upload Prescription</span>
+        </button>
+      </div>
       <div className="flex gap-2 flex-wrap">
         {cats.map(c => (
           <button key={c} onClick={() => setFilter(c)} className="mv-chip" style={{
@@ -785,6 +955,7 @@ const VaultView = ({ currentUser }) => {
           ))}
         </div>
       )}
+      {showUpload && <UploadPrescriptionModal onClose={() => setShowUpload(false)} currentUser={currentUser} />}
     </div>
   );
 };
@@ -848,12 +1019,12 @@ const MedicationsView = () => (
 const AllergiesView = ({ currentUser }) => {
   const { data, loading, mutate } = useApi(() => vaultService.getAllergies(currentUser?.user_id), [currentUser?.user_id]);
   const records = data || [];
-  
+
   const [showAdd, setShowAdd] = useState(false);
   const [allergen, setAllergen] = useState("");
   const [severity, setSeverity] = useState("Mild");
   const [submitting, setSubmitting] = useState(false);
-  
+
   const handleAdd = async (e) => {
     e.preventDefault();
     setSubmitting(true);
@@ -879,7 +1050,7 @@ const AllergiesView = ({ currentUser }) => {
           {showAdd ? "Cancel" : "+ Add Allergy"}
         </button>
       </div>
-      
+
       {showAdd && (
         <Card className="mb-4">
           <form onSubmit={handleAdd} className="space-y-3">
@@ -918,7 +1089,7 @@ const AllergiesView = ({ currentUser }) => {
 const LabsView = ({ currentUser }) => {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+
   const [showAdd, setShowAdd] = useState(false);
   const [testName, setTestName] = useState("");
   const [summary, setSummary] = useState("");
@@ -950,14 +1121,14 @@ const LabsView = ({ currentUser }) => {
         test_name: testName
       });
       const reqId = reqRes.data.request_id;
-      
+
       const formData = new FormData();
       formData.append('file', file);
       formData.append('summary_text', summary);
       formData.append('document_type', 'LAB_SUMMARY');
-      
+
       await api.post(`/lab/requests/${reqId}/report`, formData);
-      
+
       await fetchReports();
       setShowAdd(false);
       setTestName("");
@@ -979,7 +1150,7 @@ const LabsView = ({ currentUser }) => {
           {showAdd ? "Cancel" : "+ Upload Report"}
         </button>
       </div>
-      
+
       {showAdd && (
         <Card className="mb-4">
           <form onSubmit={handleAdd} className="space-y-3">
@@ -1022,7 +1193,7 @@ const EmergencyInfoView = ({ currentUser }) => {
   const [active, setActive] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  
+
   const [contactName, setContactName] = useState(currentUser?.patient_profile?.emergency_contact_name || "");
   const [contactPhone, setContactPhone] = useState(currentUser?.patient_profile?.emergency_contact_phone || "");
   const [bloodGroup, setBloodGroup] = useState(currentUser?.patient_profile?.blood_group || "");
@@ -1076,7 +1247,7 @@ const EmergencyInfoView = ({ currentUser }) => {
             </button>
           )}
         </div>
-        
+
         {editMode ? (
           <form onSubmit={saveContactInfo} className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1138,15 +1309,15 @@ const AIAssistantView = ({ currentUser }) => {
     const userMessage = input;
     setMessages(m => [...m, { from: "user", text: userMessage }]);
     setInput("");
-    
+
     // Add loading indicator
     setMessages(m => [...m, { from: "ai", text: "..." }]);
-    
+
     try {
       const token = localStorage.getItem("access_token");
       const res = await fetch("http://127.0.0.1:8000/api/v1/ai/chat", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
@@ -1154,7 +1325,7 @@ const AIAssistantView = ({ currentUser }) => {
       });
       if (!res.ok) throw new Error("Failed to get AI response");
       const data = await res.json();
-      
+
       // Replace loading indicator with actual response
       setMessages(m => {
         const newM = [...m];
@@ -1339,7 +1510,7 @@ const ActiveConsentsView = ({ currentUser }) => {
 const VaccinationsView = ({ currentUser }) => {
   const { data, loading, mutate } = useApi(() => vaultService.getVaccinations(currentUser?.user_id), [currentUser?.user_id]);
   const records = data || [];
-  
+
   const [showAdd, setShowAdd] = useState(false);
   const [vaccineName, setVaccineName] = useState("");
   const [dateAdministered, setDateAdministered] = useState("");
@@ -1350,8 +1521,8 @@ const VaccinationsView = ({ currentUser }) => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await vaultService.addVaccination({ 
-        patient_id: currentUser.user_id, 
+      await vaultService.addVaccination({
+        patient_id: currentUser.user_id,
         vaccine_name: vaccineName,
         date_administered: dateAdministered ? new Date(dateAdministered).toISOString() : null,
         next_due_date: nextDueDate ? new Date(nextDueDate).toISOString() : null
@@ -1377,7 +1548,7 @@ const VaccinationsView = ({ currentUser }) => {
           {showAdd ? "Cancel" : "+ Add Vaccination"}
         </button>
       </div>
-      
+
       {showAdd && (
         <Card className="mb-4">
           <form onSubmit={handleAdd} className="space-y-3">
@@ -1520,7 +1691,7 @@ const CreatePrescriptionView = () => {
   const [signed, setSigned] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  
+
   const [patientId, setPatientId] = useState("");
   const [medication, setMedication] = useState("Atorvastatin 20mg");
   const [dosageFreq, setDosageFreq] = useState("Once daily, evening");
@@ -1572,9 +1743,9 @@ const CreatePrescriptionView = () => {
             <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>DURATION (DAYS)</label><input className="mv-input mv-focusable mt-1" type="number" value={duration} onChange={e => setDuration(e.target.value)} /></div>
           </div>
           <div><label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>CLINICAL NOTES</label><textarea className="mv-input mv-focusable mt-1" rows={3} value={notes} onChange={e => setNotes(e.target.value)} /></div>
-          
+
           {error && <div className="text-sm text-red-500 p-2 bg-red-50 dark:bg-red-900/20 rounded-lg mt-2">{error}</div>}
-          
+
           <div className="flex justify-end gap-2 pt-2">
             <button className="mv-btn mv-btn-ghost">Save Draft</button>
             <button className="mv-btn mv-btn-primary" disabled={loading || !patientId} onClick={() => setSig(true)}>
@@ -1737,7 +1908,7 @@ const MedAdminView = () => {
           </select>
         </div>
       </Card>
-      
+
       {patientId && (
         <Card>
           <h4 className="font-semibold text-sm mb-3">Active Prescriptions</h4>
@@ -2091,7 +2262,7 @@ const AICenterView = ({ currentUser }) => {
   }, []);
 
   const alerts = fraudData?.alerts || [];
-  
+
   // Convert live fraud data to chart format
   const fraudHeatLive = [
     { region: "Doctor Shopping", score: alerts.filter(a => a.alert_type === "doctor_shopping").length * 10 },
@@ -2287,7 +2458,7 @@ const AuditView = () => {
 const COLORS = ["#0FB6AA", "#2F6FE0", "#F2A93B", "#E5484D"];
 const AnalyticsView = () => {
   const { data: auditStats, loading } = useApi(() => auditService.getStats(), []);
-  
+
   // Create chart data from audit stats or use defaults
   const chartData = loading ? [] : [
     { m: "Jan", rx: 150, access: 320, fraud: 2 },
@@ -2299,8 +2470,8 @@ const AnalyticsView = () => {
   ];
 
   const pieRx = [
-    { name: "Active", value: 58 }, 
-    { name: "Completed", value: 32 }, 
+    { name: "Active", value: 58 },
+    { name: "Completed", value: 32 },
     { name: "Expired", value: 10 }
   ];
 
@@ -2393,7 +2564,7 @@ const UsersView = () => {
 const VitalsHistoryView = ({ currentUser }) => {
   const [vitals, setVitals] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ hr: "", bps: "", bpd: "", temp: "", spo2: "", notes: "" });
   const [submitting, setSubmitting] = useState(false);
@@ -2445,19 +2616,19 @@ const VitalsHistoryView = ({ currentUser }) => {
           {showAdd ? "Cancel" : "+ Record Vitals"}
         </button>
       </div>
-      
+
       {showAdd && (
         <Card className="mb-4">
           <form onSubmit={handleAdd} className="space-y-3">
             <h4 className="font-semibold text-sm">Record New Vitals</h4>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <input className="mv-input" type="number" placeholder="HR (bpm)" value={form.hr} onChange={e => setForm({...form, hr: e.target.value})} />
-              <input className="mv-input" type="number" placeholder="BP Sys" value={form.bps} onChange={e => setForm({...form, bps: e.target.value})} />
-              <input className="mv-input" type="number" placeholder="BP Dia" value={form.bpd} onChange={e => setForm({...form, bpd: e.target.value})} />
-              <input className="mv-input" type="number" step="0.1" placeholder="Temp (°C)" value={form.temp} onChange={e => setForm({...form, temp: e.target.value})} />
-              <input className="mv-input" type="number" placeholder="SpO2 (%)" value={form.spo2} onChange={e => setForm({...form, spo2: e.target.value})} />
+              <input className="mv-input" type="number" placeholder="HR (bpm)" value={form.hr} onChange={e => setForm({ ...form, hr: e.target.value })} />
+              <input className="mv-input" type="number" placeholder="BP Sys" value={form.bps} onChange={e => setForm({ ...form, bps: e.target.value })} />
+              <input className="mv-input" type="number" placeholder="BP Dia" value={form.bpd} onChange={e => setForm({ ...form, bpd: e.target.value })} />
+              <input className="mv-input" type="number" step="0.1" placeholder="Temp (°C)" value={form.temp} onChange={e => setForm({ ...form, temp: e.target.value })} />
+              <input className="mv-input" type="number" placeholder="SpO2 (%)" value={form.spo2} onChange={e => setForm({ ...form, spo2: e.target.value })} />
             </div>
-            <input className="mv-input" placeholder="Notes (optional)" value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} />
+            <input className="mv-input" placeholder="Notes (optional)" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
             <button type="submit" className="mv-btn mv-btn-primary w-full" disabled={submitting}>
               {submitting ? "Saving..." : "Save Record"}
             </button>
@@ -2492,10 +2663,10 @@ const VitalsHistoryView = ({ currentUser }) => {
 const VitalsManagementView = ({ currentUser }) => {
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(false);
-  
+
   const [patients, setPatients] = useState([]);
   const [patientId, setPatientId] = useState("");
-  
+
   const [hr, setHr] = useState("");
   const [bpSys, setBpSys] = useState("");
   const [bpDia, setBpDia] = useState("");
@@ -2568,7 +2739,7 @@ const VitalsManagementView = ({ currentUser }) => {
 const DoctorCareTeamView = () => {
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+
   const [showAdd, setShowAdd] = useState(false);
   const [patientId, setPatientId] = useState("");
   const [nurseId, setNurseId] = useState("");
@@ -2628,7 +2799,7 @@ const DoctorCareTeamView = () => {
           {showAdd ? "Cancel" : "+ Assign Nurse"}
         </button>
       </div>
-      
+
       {showAdd && (
         <Card className="mb-4">
           <form onSubmit={handleAssign} className="space-y-3">
@@ -2692,7 +2863,7 @@ const LabRequestsView = ({ currentUser }) => {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [uploadingFor, setUploadingFor] = useState(null);
-  
+
   const [docType, setDocType] = useState("LAB_SUMMARY");
   const [summaryText, setSummaryText] = useState("");
   const [file, setFile] = useState(null);
@@ -2728,7 +2899,7 @@ const LabRequestsView = ({ currentUser }) => {
     e.preventDefault();
     if (!file) return alert("Please select a file.");
     setActionLoading(true);
-    
+
     const formData = new FormData();
     formData.append("document_type", docType);
     formData.append("summary_text", summaryText);
@@ -2751,7 +2922,7 @@ const LabRequestsView = ({ currentUser }) => {
   return (
     <div className="space-y-4">
       <SectionHeader icon={FlaskConical} title="Lab Requests" desc="Manage patient test requests and upload reports" />
-      
+
       {uploadingFor && (
         <Card className="mb-4">
           <div className="flex justify-between items-center mb-3">
@@ -2776,7 +2947,7 @@ const LabRequestsView = ({ currentUser }) => {
             </div>
             <div>
               <label className="text-xs font-semibold text-gray-500">REPORT FILE</label>
-              <input type="file" className="mv-input mt-1" required 
+              <input type="file" className="mv-input mt-1" required
                 accept={docType === "PDF_REPORT" ? ".pdf" : docType === "LAB_SUMMARY" ? ".pdf,.txt,.csv" : docType === "OTHER" ? "*" : ".dcm,.jpg,.jpeg,.png"}
                 onChange={e => setFile(e.target.files[0])} />
             </div>
@@ -2839,7 +3010,7 @@ const BloodInventoryView = () => {
   const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
-  
+
   const [bloodGroup, setBloodGroup] = useState("O+");
   const [component, setComponent] = useState("WHOLE_BLOOD");
   const [collectionDate, setCollectionDate] = useState("");
@@ -2887,7 +3058,7 @@ const BloodInventoryView = () => {
           {adding ? "Close" : "+ Add Unit"}
         </button>
       } />
-      
+
       {adding && (
         <Card className="mb-4">
           <form onSubmit={handleAdd} className="space-y-3">
@@ -2946,7 +3117,7 @@ const PatientBloodRequestsView = ({ currentUser }) => {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
-  
+
   const [bloodGroup, setBloodGroup] = useState("O+");
   const [component, setComponent] = useState("WHOLE_BLOOD");
   const [units, setUnits] = useState(1);
@@ -2990,7 +3161,7 @@ const PatientBloodRequestsView = ({ currentUser }) => {
   return (
     <div className="space-y-4">
       <SectionHeader icon={Droplet} title="My Blood Requests" desc="Request blood units for upcoming procedures" />
-      
+
       <Card className="mb-4">
         <h4 className="font-semibold text-sm mb-3">Submit New Request</h4>
         <form onSubmit={handleRequestSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -3050,7 +3221,7 @@ const DoctorBloodRequestsView = ({ currentUser }) => {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
-  
+
   const [patientId, setPatientId] = useState("");
   const [bloodGroup, setBloodGroup] = useState("O+");
   const [component, setComponent] = useState("WHOLE_BLOOD");
@@ -3097,7 +3268,7 @@ const DoctorBloodRequestsView = ({ currentUser }) => {
   return (
     <div className="space-y-4">
       <SectionHeader icon={Droplet} title="Blood Requests" desc="Request blood units for your patients" />
-      
+
       <Card className="mb-4">
         <h4 className="font-semibold text-sm mb-3">Submit New Request</h4>
         <form onSubmit={handleRequestSubmit} className="grid grid-cols-1 md:grid-cols-5 gap-3">
@@ -3211,7 +3382,7 @@ const BloodRequestsView = () => {
   return (
     <div className="space-y-4">
       <SectionHeader icon={Activity} title="Blood Requests" desc="Incoming requests for blood units" />
-      
+
       {rejectingFor && (
         <Card className="mb-4 border-red-200 bg-red-50/30">
           <div className="flex justify-between items-center mb-2">
@@ -3294,7 +3465,7 @@ const HospitalAdminOverview = ({ currentUser }) => {
   return (
     <div className="space-y-4">
       <SectionHeader icon={Building2} title="Hospital Administration" desc={`Manage staff and network for ${currentUser?.hospital_name || 'your hospital'}`} />
-      
+
       <div className="flex gap-2">
         <button className={`mv-btn text-xs ${activeTab === 'staff' ? 'mv-btn-primary' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`} onClick={() => setActiveTab('staff')}>Hospital Staff</button>
         <button className={`mv-btn text-xs ${activeTab === 'network' ? 'mv-btn-primary' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`} onClick={() => setActiveTab('network')}>Extended Network</button>
@@ -3312,7 +3483,7 @@ const HospitalAdminOverview = ({ currentUser }) => {
                     <td><Pill_ tone={s.role === "DOCTOR" ? "blue" : "indigo"}>{s.role}</Pill_></td>
                     <td>{s.specialization || s.department || "N/A"}</td>
                     <td className="mv-font-mono text-xs">{s.license_number}</td>
-                    <td>{s.verified ? <span className="text-green-500 flex items-center gap-1"><Check size={14}/>Verified</span> : <span className="text-amber-500">Pending</span>}</td>
+                    <td>{s.verified ? <span className="text-green-500 flex items-center gap-1"><Check size={14} />Verified</span> : <span className="text-amber-500">Pending</span>}</td>
                   </tr>
                 ))}
                 {staff.length === 0 && <tr><td colSpan="5" className="text-center py-6 text-gray-500">No staff found.</td></tr>}
@@ -3344,7 +3515,7 @@ const HospitalAdminOverview = ({ currentUser }) => {
 const AppointmentsView = ({ currentUser }) => {
   const { data: appointmentData, loading, mutate } = useApi(() => appointmentService.getAppointments(), []);
   const { data: statsData } = useApi(() => appointmentService.getAppointmentStats(), []);
-  
+
   const appointments = appointmentData?.appointments || [];
   const stats = statsData || {};
 
@@ -3370,13 +3541,13 @@ const AppointmentsView = ({ currentUser }) => {
         ...form,
         scheduled_datetime: new Date(form.scheduled_datetime).toISOString()
       };
-      
+
       if (currentUser.role === 'PATIENT') {
         appointmentData.patient_id = currentUser.user_id;
       } else if (currentUser.role === 'DOCTOR') {
         appointmentData.doctor_id = currentUser.user_id;
       }
-      
+
       await appointmentService.createAppointment(appointmentData);
       mutate();
       setShowCreate(false);
@@ -3411,9 +3582,9 @@ const AppointmentsView = ({ currentUser }) => {
 
   return (
     <div className="space-y-4">
-      <SectionHeader 
-        icon={CalendarClock} 
-        title="My Appointments" 
+      <SectionHeader
+        icon={CalendarClock}
+        title="My Appointments"
         desc="Manage your scheduled appointments"
         action={
           <button className="mv-btn mv-btn-primary" onClick={() => setShowCreate(true)}>
@@ -3666,7 +3837,7 @@ export default function CryptcareApp() {
         try {
           const me = await authService.getMe();
           setCurrentUser(me);
-          
+
           try {
             const notifs = await notificationService.getAll();
             setNotifications(notifs || []);
@@ -3693,7 +3864,7 @@ export default function CryptcareApp() {
       try {
         const count = await notificationService.getUnreadCount();
         setUnreadCount(count);
-      } catch (e) {}
+      } catch (e) { }
     }, 15000); // Poll every 15s
     return () => clearInterval(interval);
   }, [currentUser]);

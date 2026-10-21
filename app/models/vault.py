@@ -101,3 +101,31 @@ class DispenseRecord(Base):
     dispensed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     prescription: Mapped["Prescription"] = relationship(back_populates="dispense_record")
+
+
+class PatientDocumentCategoryEnum(str, enum.Enum):
+    PRESCRIPTION = "PRESCRIPTION"
+    LAB_REPORT = "LAB_REPORT"
+    MEDICAL_HISTORY = "MEDICAL_HISTORY"
+    INSURANCE = "INSURANCE"
+    OTHER = "OTHER"
+
+
+class PatientDocument(Base):
+    """Patient-uploaded documents (prescriptions, medical records, etc.)"""
+    __tablename__ = "patient_documents"
+
+    document_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    patient_id: Mapped[str] = mapped_column(String(36), ForeignKey("patient_profiles.patient_id"), nullable=False)
+    category: Mapped[PatientDocumentCategoryEnum] = mapped_column(
+        Enum(PatientDocumentCategoryEnum), 
+        default=PatientDocumentCategoryEnum.OTHER, 
+        nullable=False
+    )
+    filename_encrypted: Mapped[str] = mapped_column(String(512), nullable=False)
+    file_path_encrypted: Mapped[str] = mapped_column(String(1024), nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    note_encrypted: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    uploaded_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.user_id"), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

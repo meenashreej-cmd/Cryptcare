@@ -196,6 +196,10 @@ export const vaultService = {
     const res = await api.post('/vault/vaccinations', payload);
     return res.data;
   },
+  getDocuments: async (patientId) => {
+    const res = await api.get(`/vault/documents?patient_id=${patientId}`);
+    return res.data;
+  },
 };
 
 // ── LAB ────────────────────────────────────────────────────────────────────
@@ -462,7 +466,7 @@ export const appointmentService = {
     if (params.to_date) queryParams.append('to_date', params.to_date);
     if (params.limit) queryParams.append('limit', params.limit);
     if (params.offset) queryParams.append('offset', params.offset);
-    
+
     const res = await api.get(`/appointments?${queryParams.toString()}`);
     return res.data;
   },
