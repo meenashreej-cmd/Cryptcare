@@ -95,9 +95,13 @@ export default function LoginPage({
         setNeedsOtp(true);
         setIsMfaStep(false);
         setMfaEnrollPreauth(null);
-        setOtpCode("");
+        setOtpCode(response.dev_otp || "");
         setError("");
-        setInfoMessage("Verification code sent to your email. Please enter the 6-digit code below.");
+        setInfoMessage(
+          response.dev_otp
+            ? `Verification code: ${response.dev_otp} (Auto-filled)`
+            : "Verification code sent to your email. Please enter the 6-digit code below."
+        );
       } else if (response.requires_mfa_enrollment) {
         setNeedsOtp(true);
         setIsMfaStep(true);

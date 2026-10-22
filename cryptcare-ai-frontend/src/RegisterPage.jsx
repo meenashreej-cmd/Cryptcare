@@ -135,7 +135,12 @@ export default function RegisterPage({
       setPendingUserId(data.user_id);
       if (data.preauth_token) setPendingPreauthToken(data.preauth_token);
       if (data.mfa_provisioning_uri) setShowMfaUri(data.mfa_provisioning_uri);
-      setOtpCode("");
+      if (data.dev_otp) {
+        setOtpCode(data.dev_otp);
+        setResendSuccess(`Verification code: ${data.dev_otp} (Auto-filled)`);
+      } else {
+        setOtpCode("");
+      }
       setResendCooldown(60);
       setStep("otp");
     } catch (err) {
