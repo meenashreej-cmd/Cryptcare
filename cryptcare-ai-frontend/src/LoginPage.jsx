@@ -31,6 +31,7 @@ export default function LoginPage({
   const [copiedSecret, setCopiedSecret] = useState(false);
   const [canResendOtp, setCanResendOtp] = useState(true);
   const [resendCooldown, setResendCooldown] = useState(0);
+  const [patientPreauthToken, setPatientPreauthToken] = useState(null);
 
   // Forgot password modal
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -95,6 +96,7 @@ export default function LoginPage({
         setNeedsOtp(true);
         setIsMfaStep(false);
         setMfaEnrollPreauth(null);
+        setPatientPreauthToken(response.preauth_token || null);
         setOtpCode(response.dev_otp || "");
         setError("");
         setInfoMessage(
@@ -106,6 +108,7 @@ export default function LoginPage({
         setNeedsOtp(true);
         setIsMfaStep(true);
         setMfaEnrollPreauth(response.preauth_token);
+        setPatientPreauthToken(null);
         setOtpCode("");
         setError("");
         setInfoMessage("First-time MFA setup: Scan the QR code or enter the key into your authenticator app (Google Authenticator / Authy), then enter the 6-digit code.");
@@ -121,6 +124,7 @@ export default function LoginPage({
         setNeedsOtp(true);
         setIsMfaStep(true);
         setMfaEnrollPreauth(null);
+        setPatientPreauthToken(null);
         setOtpCode("");
         setError("");
         setInfoMessage("Multi-Factor Authentication (MFA) required. Enter the 6-digit code from your authenticator app.");
@@ -142,7 +146,11 @@ export default function LoginPage({
     setError("");
     setInfoMessage("");
     try {
-      await authService.login(email, password);
+      if (patientPreauthToken) {
+        await authService.resendPatientOtp(patientPreauthToken);
+      } else {
+        await authService.login(email, password);
+      }
       setOtpCode("");
       setError("");
       setInfoMessage("A new verification code has been sent to your email.");
@@ -161,6 +169,7 @@ export default function LoginPage({
     setNeedsOtp(false);
     setIsMfaStep(false);
     setMfaEnrollPreauth(null);
+    setPatientPreauthToken(null);
     setOtpCode("");
     setDevMfaSecret(null);
     setMfaUri(null);

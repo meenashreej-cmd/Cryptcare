@@ -9,8 +9,15 @@ import axios from 'axios';
  *  - In production, the reverse proxy (nginx / Caddy) routes /api to the
  *    FastAPI container on the same host.
  */
+export const getBaseURL = () => {
+  const envUrl = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+  if (!envUrl) return '/api/v1';
+  if (envUrl.endsWith('/api/v1')) return envUrl;
+  return `${envUrl}/api/v1`;
+};
+
 const api = axios.create({
-  baseURL: (import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace(/\/+$/, '') : '') + '/api/v1',
+  baseURL: getBaseURL(),
 });
 
 // ── Request interceptor ────────────────────────────────────────────────────
@@ -70,7 +77,7 @@ api.interceptors.response.use(
       }
 
       try {
-        const { data } = await axios.post('/api/v1/auth/refresh', {
+        const { data } = await axios.post(`${getBaseURL()}/auth/refresh`, {
           refresh_token: refreshToken,
         }, {
           headers: { 'X-Requested-With': 'XMLHttpRequest' }
@@ -162,8 +169,12 @@ export const authService = {
     });
     return res.data;
   },
-  resendPatientOtp: async () => {
-    const res = await api.post('/auth/resend-patient-otp');
+  resendPatientOtp: async (preauthToken = null) => {
+    const config = {};
+    if (preauthToken) {
+      config.headers = { Authorization: `Bearer ${preauthToken}` };
+    }
+    const res = await api.post('/auth/resend-patient-otp', {}, config);
     return res.data;
   },
 };

@@ -21,6 +21,7 @@ PUBLIC_ALLOWLIST = {
     "/api/v1/auth/forgot-password",
     "/api/v1/auth/reset-password",
     "/api/v1/emergency/access/{token}",
+    "/api/v1/audit/trust-ledger",
     "/docs",
     "/openapi.json",
     "/redoc",

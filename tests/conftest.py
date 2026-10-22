@@ -108,6 +108,14 @@ def _reset_rate_limits():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _disable_smtp_in_tests(monkeypatch):
+    """By default, disable real SMTP in test runs to prevent network calls and timeouts."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "SMTP_ENABLED", False)
+    yield
+
+
 @pytest.fixture
 def client(db):
     def override_get_db():

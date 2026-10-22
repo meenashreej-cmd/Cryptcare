@@ -316,11 +316,15 @@ def register_user(db: Session, payload: RegisterRequest, client_ip: str) -> tupl
     # admin accounts never go through this public endpoint in the first place
     # (see the comment above) — this check is a deliberate second guard, not
     # redundant, in case an ADMIN row is ever created here in the future.
-    if payload.role != RoleEnum.ADMIN:
-        _send_otp(user)
+    try:
+        if payload.role != RoleEnum.ADMIN:
+            _send_otp(user)
 
-    db.commit()
-    db.refresh(user)
+        db.commit()
+        db.refresh(user)
+    except Exception:
+        db.rollback()
+        raise
     _record_auth_event(db, user.user_id, AccessActionEnum.WRITE, "identity_genesis_registered", client_ip)
 
     # Returned exactly once, at registration — same principle as GitHub/AWS
@@ -334,28 +338,62 @@ def register_user(db: Session, payload: RegisterRequest, client_ip: str) -> tupl
     return user, mfa_provisioning_uri, license_verified
 
 
-def _send_otp(user: User) -> None:
+def _connect_smtp() -> smtplib.SMTP:
+    """Establish and authenticate an SMTP connection based on application settings."""
+    timeout = settings.SMTP_TIMEOUT_SECONDS
+    use_ssl = settings.SMTP_USE_SSL or settings.SMTP_PORT == 465
+    
+    if use_ssl:
+        server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=timeout)
+    else:
+        server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=timeout)
+
+    server.ehlo()
+    if not use_ssl and settings.SMTP_USE_TLS:
+        server.starttls()
+        server.ehlo()
+
+    if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
+        server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+
+    return server
+
+
+def _send_otp(user: User) -> str:
+    """Generate and dispatch OTP. Raises HTTPException(503) if delivery fails,
+    ensuring callers never claim an OTP was dispatched when delivery failed.
+    """
     otp = _generate_otp()
     _OTP_STORE[user.user_id] = {
         "code": otp,
         "expires_at": datetime.now(timezone.utc) + timedelta(seconds=settings.OTP_EXPIRY_SECONDS),
         "attempts": 0,
     }
+
     if settings.SMTP_ENABLED:
-        _dispatch_otp_email(user.email, user.full_name, otp)
+        try:
+            _dispatch_otp_email(user.email, user.full_name, otp)
+        except Exception:
+            _OTP_STORE.pop(user.user_id, None)
+            raise
     else:
-        # Dev / CI fallback — visible in server logs, never in API responses.
-        logger.info("[DEV] OTP for %s (%s): %s", user.email, user.phone, otp)
-        print(f"[DEV] OTP for {user.email}: {otp}")
+        # Dev / CI fallback — visible in server logs ONLY in development, NEVER in production.
+        if settings.ENV in ("dev", "development"):
+            logger.info("[DEV] OTP for %s: %s", user.email, otp)
+        else:
+            _OTP_STORE.pop(user.user_id, None)
+            logger.error("SMTP is disabled in production environment (%s); cannot deliver OTP to %s", settings.ENV, user.email)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Email delivery service is disabled in production. Please configure SMTP settings.",
+            )
+
+    return otp
 
 
 def _dispatch_otp_email(to_email: str, full_name: str, otp: str) -> None:
-    """Send a one-time passcode to *to_email* via SMTP (TLS on port 587).
-
-    Failures are logged and swallowed so a transient SMTP outage never blocks
-    registration — the caller can re-request a new OTP once the issue clears.
-    The OTP is already stored in _OTP_STORE before this is called, so a
-    delivery failure doesn't corrupt state.
+    """Send a one-time passcode to *to_email* via SMTP.
+    Raises HTTPException(503) if delivery fails. Logs errors safely without credentials or OTP values.
     """
     from_addr = settings.SMTP_FROM_ADDRESS or settings.SMTP_USERNAME
     expiry_minutes = settings.OTP_EXPIRY_SECONDS // 60
@@ -388,7 +426,7 @@ def _dispatch_otp_email(to_email: str, full_name: str, otp: str) -> None:
               CryptCare
             </h1>
             <p style="margin:4px 0 0;color:rgba(255,255,255,0.75);font-size:11px;
-                      font-family:'JetBrains Mono',monospace;letter-spacing:0.06em;">
+                       font-family:'JetBrains Mono',monospace;letter-spacing:0.06em;">
               SOVEREIGN RX NETWORK
             </p>
           </td>
@@ -441,51 +479,44 @@ def _dispatch_otp_email(to_email: str, full_name: str, otp: str) -> None:
     msg["Subject"] = f"Your CryptCare verification code: {otp}"
     msg["From"] = f"{settings.SMTP_FROM_NAME} <{from_addr}>"
     msg["To"] = to_email
-    msg.attach(MIMEText(text_body, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
+    msg.attach(MIMEText(text_body, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     try:
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+        with _connect_smtp() as server:
             server.sendmail(from_addr, [to_email], msg.as_string())
-        logger.info("OTP email dispatched to %s", to_email)
-    except Exception as exc:  # noqa: BLE001
-        # Log the failure but don't raise — a failed email must not 500 the
-        # registration response. The OTP is in _OTP_STORE; the user can
-        # re-request once the delivery issue is resolved.
-        logger.error("Failed to send OTP email to %s: %s", to_email, exc)
+        logger.info("OTP email successfully dispatched to %s", to_email)
+    except Exception as exc:
+        logger.error("Failed to send OTP email to %s: %s", to_email, type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to send verification email. Please verify email settings or try again later.",
+        ) from exc
 
 
 def _dispatch_email(to_email: str, full_name: str, subject: str, html_body: str) -> None:
     """Generic email dispatch function"""
     from_addr = settings.SMTP_FROM_ADDRESS or settings.SMTP_USERNAME
-    
+
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = f"{settings.SMTP_FROM_NAME} <{from_addr}>"
         msg["To"] = to_email
 
-        html_part = MIMEText(html_body, "html")
+        html_part = MIMEText(html_body, "html", "utf-8")
         msg.attach(html_part)
 
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+        with _connect_smtp() as server:
             server.sendmail(from_addr, [to_email], msg.as_string())
 
-        logger.info(f"Email sent successfully to {to_email}")
+        logger.info("Email sent successfully to %s", to_email)
     except Exception as e:
-        logger.error(f"Failed to send email to {to_email}: {e}")
+        logger.error("Failed to send email to %s: %s", to_email, type(e).__name__)
         raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            f"Email delivery failed: {e}"
-        )
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email delivery failed. Please try again later."
+        ) from e
 
 
 def verify_otp(db: Session, user_id: str, jti: str, otp_code: str, client_ip: str) -> User:
@@ -1072,12 +1103,17 @@ def _send_password_reset_email(user: User, reset_token: str, otp: str) -> None:
     """Send password reset email with 6-digit code and direct link"""
     subject = f"Your CryptCare password reset code: {otp}"
     reset_link = f"{settings.FRONTEND_URL}/?token={reset_token}"
-    logger.info("[AUTH] Password reset code for %s: %s (link: %s)", user.email, otp, reset_link)
-    print(f"[AUTH] Password reset code for {user.email}: {otp} (link: {reset_link})")
+    if settings.ENV in ("dev", "development"):
+        logger.info("[DEV] Password reset code for %s: %s (link: %s)", user.email, otp, reset_link)
 
     if not settings.SMTP_ENABLED:
-        logger.info("[DEV] SMTP disabled - skipping email dispatch to %s", user.email)
-        return
+        if settings.ENV in ("dev", "development"):
+            logger.info("[DEV] SMTP disabled - skipping email dispatch to %s", user.email)
+            return
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email delivery service is disabled in production. Please configure SMTP settings."
+        )
 
     text_body = (
         f"Hi {user.full_name},\n\n"
@@ -1157,20 +1193,16 @@ def _send_password_reset_email(user: User, reset_token: str, otp: str) -> None:
         msg.attach(MIMEText(text_body, "plain", "utf-8"))
         msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+        with _connect_smtp() as server:
             server.sendmail(from_addr, [user.email], msg.as_string())
 
         logger.info("Password reset email sent successfully to %s", user.email)
     except Exception as e:
-        logger.error("Failed to send password reset email to %s: %s", user.email, e)
+        logger.error("Failed to send password reset email to %s: %s", user.email, type(e).__name__)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to dispatch password reset email: {e}"
-        )
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to dispatch password reset email. Please try again later."
+        ) from e
 
 
 def send_patient_login_otp(db: Session, user: User, client_ip: str) -> None:

@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     SMTP_FROM_ADDRESS: str = ""
     SMTP_FROM_NAME: str = "CryptCare"
+    SMTP_USE_TLS: bool = True
+    SMTP_USE_SSL: bool = False
+    SMTP_TIMEOUT_SECONDS: int = 15
 
     # App
     ENV: str = "development"

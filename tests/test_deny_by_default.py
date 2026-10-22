@@ -23,16 +23,23 @@ def has_auth_dependency(dependant, seen=None) -> bool:
             
     return False
 
+def _flatten_routes(router, prefix=""):
+    flat = []
+    for item in getattr(router, "routes", []):
+        if hasattr(item, "path"):
+            flat.append((prefix + item.path, item))
+        elif hasattr(item, "include_context") and hasattr(item, "original_router"):
+            flat.extend(_flatten_routes(item.original_router, prefix + (item.include_context.prefix or "")))
+    return flat
+
 def test_all_routes_have_auth_dependency():
     from fastapi.routing import APIRoute
     missing_auth = []
     
-    for route in app.routes:
+    for path, route in _flatten_routes(app):
         if not isinstance(route, APIRoute):
             continue
             
-        path = route.path
-        
         # OpenAPI docs and special public endpoints
         if path in PUBLIC_ALLOWLIST or path in REFRESH_COOKIE_AUTHENTICATED:
             continue
@@ -54,16 +61,16 @@ def test_refresh_cookie_authenticated_routes_actually_verify():
     }
     
     verified_paths = set()
-    for route in app.routes:
-        if isinstance(route, APIRoute) and route.path in REFRESH_COOKIE_AUTHENTICATED:
-            assert route.path in SERVICE_MAPPING, f"No service function mapped for {route.path}"
-            service_func = SERVICE_MAPPING[route.path]
+    for path, route in _flatten_routes(app):
+        if isinstance(route, APIRoute) and path in REFRESH_COOKIE_AUTHENTICATED:
+            assert path in SERVICE_MAPPING, f"No service function mapped for {path}"
+            service_func = SERVICE_MAPPING[path]
             source = inspect.getsource(service_func)
             
             # The service function MUST actually cryptographically verify the token
             assert "verify_refresh_token" in source, \
-                f"Service function {service_func.__name__} for route {route.path} claims to be REFRESH_COOKIE_AUTHENTICATED but does not call verify_refresh_token!"
-            verified_paths.add(route.path)
+                f"Service function {service_func.__name__} for route {path} claims to be REFRESH_COOKIE_AUTHENTICATED but does not call verify_refresh_token!"
+            verified_paths.add(path)
             
     assert verified_paths == REFRESH_COOKIE_AUTHENTICATED, "Some paths in REFRESH_COOKIE_AUTHENTICATED were not found in app.routes!"
 

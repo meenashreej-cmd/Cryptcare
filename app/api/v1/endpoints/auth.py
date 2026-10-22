@@ -81,10 +81,12 @@ def verify_otp(
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ", 1)[1]
         try:
-            from app.core.security import verify_preauth_token
+            from app.core.security import TokenError, verify_preauth_token
             payload_data = verify_preauth_token(token, "otp_verification")
             user_id = payload_data["sub"]
             jti = payload_data["jti"]
+        except TokenError as te:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(te))
         except Exception:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired preauth token")
 
@@ -221,7 +223,10 @@ def resend_patient_otp(
     user = db.query(User).filter(User.user_id == preauth_user["sub"]).first()
     if not user or user.role != RoleEnum.PATIENT:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only available for patient accounts")
-    
+
+    auth_service._check_action_rate_limit(db, user.user_id, "resend_patient_otp", limit=1, window_seconds=60, is_ip=False)
+    auth_service._check_action_rate_limit(db, client_ip, "resend_patient_otp", limit=5, window_seconds=60, is_ip=True)
+
     auth_service.send_patient_login_otp(db, user, client_ip)
     return {"detail": "OTP resent successfully"}
 
