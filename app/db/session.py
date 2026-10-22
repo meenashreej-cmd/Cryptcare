@@ -13,9 +13,19 @@ if database_url.startswith("mysql://"):
     database_url = database_url.replace("mysql://", "mysql+pymysql://", 1)
 
 # Handle TiDB / Cloud MySQL SSL configuration on Render and production
+from pathlib import Path
+
+_project_root = Path(__file__).resolve().parent.parent.parent
 ca_path = os.getenv("TIDB_CA_PATH")
 if not ca_path:
-    for candidate in ["/etc/secrets/tidb-ca.pem", "certs/isrgrootx1.pem", "certs/tidb-ca.pem"]:
+    candidates = [
+        "/etc/secrets/tidb-ca.pem",
+        str(_project_root / "certs" / "isrgrootx1.pem"),
+        str(_project_root / "certs" / "tidb-ca.pem"),
+        "certs/isrgrootx1.pem",
+        "certs/tidb-ca.pem",
+    ]
+    for candidate in candidates:
         if os.path.isfile(candidate) and ("tidbcloud.com" in database_url or "ssl" in database_url):
             ca_path = candidate
             break
