@@ -93,14 +93,24 @@ def request_consent(db: Session, current_user: CurrentUser, payload: ConsentRequ
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only doctors, nurses, labs, and insurers can request consent")
 
-    patient = db.query(PatientProfile).filter(PatientProfile.patient_id == payload.patient_id).first()
+    from app.models.user import User
+    patient = (
+        db.query(PatientProfile)
+        .join(User, User.user_id == PatientProfile.user_id)
+        .filter(
+            (PatientProfile.patient_id == payload.patient_id)
+            | (PatientProfile.user_id == payload.patient_id)
+            | (User.email == payload.patient_id)
+        )
+        .first()
+    )
     if not patient:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
 
     duplicate = (
         db.query(ConsentRequest)
         .filter(
-            ConsentRequest.patient_id == payload.patient_id,
+            ConsentRequest.patient_id == patient.patient_id,
             ConsentRequest.grantee_id == current_user.id,
             ConsentRequest.resource_type == payload.resource_type,
             ConsentRequest.status.in_([ConsentStatusEnum.PENDING, ConsentStatusEnum.ACTIVE]),
@@ -114,7 +124,7 @@ def request_consent(db: Session, current_user: CurrentUser, payload: ConsentRequ
         )
 
     row = ConsentRequest(
-        patient_id=payload.patient_id,
+        patient_id=patient.patient_id,
         grantee_id=current_user.id,
         grantee_type=GranteeTypeEnum(current_user.role),
         resource_type=payload.resource_type,
@@ -125,7 +135,7 @@ def request_consent(db: Session, current_user: CurrentUser, payload: ConsentRequ
     db.add(row)
     db.flush()  # get consent_id before the audit log FK-adjacent insert
 
-    _write_access_log(db, current_user.id, "consent", row.consent_id, AccessActionEnum.CONSENT_REQUESTED, patient_id=payload.patient_id)
+    _write_access_log(db, current_user.id, "consent", row.consent_id, AccessActionEnum.CONSENT_REQUESTED, patient_id=patient.patient_id)
 
     notification_service.create_notification(
         db,
@@ -181,12 +191,15 @@ def revoke_consent(db: Session, current_user: CurrentUser, consent_id: str) -> C
 
 
 def list_active_consents(db: Session, current_user: CurrentUser) -> list[ConsentRequest]:
-    """PATIENT's currently ACTIVE grants."""
+    """PATIENT's active and pending grants."""
     patient_id = _resolve_patient_id(db, current_user)
     expire_stale_consents(db, patient_id=patient_id)
     return (
         db.query(ConsentRequest)
-        .filter(ConsentRequest.patient_id == patient_id, ConsentRequest.status == ConsentStatusEnum.ACTIVE)
+        .filter(
+            ConsentRequest.patient_id == patient_id,
+            ConsentRequest.status.in_([ConsentStatusEnum.ACTIVE, ConsentStatusEnum.PENDING]),
+        )
         .order_by(ConsentRequest.created_at.desc())
         .all()
     )

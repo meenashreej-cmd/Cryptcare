@@ -251,8 +251,8 @@ export const consentService = {
     const res = await api.get('/consent/timeline');
     return res.data;
   },
-  approveConsent: async (consentId) => {
-    const res = await api.put(`/consent/${consentId}/approve`);
+  approveConsent: async (consentId, durationDays = 30) => {
+    const res = await api.put(`/consent/${consentId}/approve`, { duration_days: durationDays });
     return res.data;
   },
   rejectConsent: async (consentId) => {

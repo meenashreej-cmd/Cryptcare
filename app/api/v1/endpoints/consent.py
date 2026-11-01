@@ -53,7 +53,7 @@ def list_my_requests(
 @router.put("/{consent_id}/approve", response_model=ConsentResponse)
 def approve_consent(
     consent_id: str,
-    payload: ConsentApproveRequest,
+    payload: ConsentApproveRequest = ConsentApproveRequest(),
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(require_role("PATIENT")),
 ):

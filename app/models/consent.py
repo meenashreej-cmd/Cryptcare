@@ -86,3 +86,17 @@ class ConsentRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def grantee_name(self) -> str | None:
+        try:
+            from sqlalchemy.orm import object_session
+            sess = object_session(self)
+            if sess:
+                from app.models.user import User
+                u = sess.query(User).filter(User.user_id == self.grantee_id).first()
+                if u:
+                    return u.full_name
+        except Exception:
+            pass
+        return None

@@ -43,6 +43,7 @@ class ConsentResponse(BaseModel):
     consent_id: str
     patient_id: str
     grantee_id: str
+    grantee_name: str | None = None
     grantee_type: GranteeTypeEnum
     resource_type: ResourceTypeEnum
     permission: PermissionEnum

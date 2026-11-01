@@ -873,9 +873,62 @@ const PatientOverview = ({ go, currentUser }) => {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard icon={FileText} label="Active Prescriptions" value={rxLoading ? "…" : activeRx.length} tone="teal" />
         <StatCard icon={CalendarClock} label="Upcoming Appointments" value={appointmentStats?.upcoming_this_week ?? "…"} sub="This week" tone="blue" />
+        <StatCard icon={Inbox} label="Pending Requests" value={pendingConsents.length} sub={pendingConsents.length > 0 ? "Action required" : "All reviewed"} tone={pendingConsents.length > 0 ? "amber" : "green"} />
         <StatCard icon={ShieldAlert} label="Fraud Alerts" value={alerts.length} sub={`${alerts.filter(a => a.severity === "SEVERE").length} high severity`} tone="red" />
-        <StatCard icon={History} label="Timeline Events" value={timelineRaw?.events?.length ?? "…"} tone="green" />
       </div>
+
+      {pendingConsents.length > 0 && (
+        <Card className="border border-amber-500/40 bg-amber-500/10 p-4 rounded-2xl space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-500">
+                <Inbox size={20} />
+              </div>
+              <div>
+                <h4 className="font-semibold text-sm">
+                  Incoming Doctor & Provider Access Requests ({pendingConsents.length})
+                </h4>
+                <p className="text-xs" style={{ color: "var(--text-dim)" }}>
+                  Healthcare providers have requested permission to view your medical records.
+                </p>
+              </div>
+            </div>
+            <button className="mv-btn mv-btn-primary text-xs" onClick={() => go("access-requests")}>
+              Review in Access Requests <ChevronRight size={13} />
+            </button>
+          </div>
+          <div className="space-y-2 pt-1">
+            {pendingConsents.map(r => (
+              <div key={r.consent_id} className="flex items-center justify-between p-3 rounded-xl mv-glass text-xs flex-wrap gap-2">
+                <div className="flex items-center gap-2.5">
+                  <UserCog size={16} className="text-blue-500" />
+                  <div>
+                    <span className="font-semibold text-sm">{r.grantee_name || r.grantee_type}</span>{" "}
+                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-500 ml-1">{r.grantee_type}</span>
+                    <p className="text-xs mt-0.5" style={{ color: "var(--text-dim)" }}>
+                      Requests <span className="font-semibold text-white/90">{r.permission}</span> access to your <span className="font-semibold text-teal-400">{r.resource_type}</span>
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button className="mv-btn mv-btn-danger text-xs py-1.5 px-3" onClick={async () => {
+                    await consentService.rejectConsent(r.consent_id);
+                    window.location.reload();
+                  }}>
+                    <X size={12} /> Reject
+                  </button>
+                  <button className="mv-btn mv-btn-primary text-xs py-1.5 px-3" onClick={async () => {
+                    await consentService.approveConsent(r.consent_id);
+                    window.location.reload();
+                  }}>
+                    <Check size={12} /> Approve
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2">
           <div className="flex items-center justify-between mb-3">
@@ -1654,33 +1707,51 @@ const DoctorOverview = ({ go, currentUser }) => {
 
 const PatientSearchView = ({ currentUser }) => {
   const [patientId, setPatientId] = useState("");
+  const [resourceType, setResourceType] = useState("all");
   const [requesting, setRequesting] = useState(false);
   const [done, setDone] = useState(false);
   const [err, setErr] = useState("");
   const request = async () => {
     if (!patientId.trim()) return;
-    setRequesting(true); setErr("");
+    setRequesting(true); setErr(""); setDone(false);
     try {
-      await consentService.requestConsent({ patient_id: patientId, resource_type: "prescriptions", permission: "READ" });
+      await consentService.requestConsent({ patient_id: patientId.trim(), resource_type: resourceType, permission: "READ" });
       setDone(true);
     } catch (e) { setErr(e?.response?.data?.detail || "Request failed"); }
     finally { setRequesting(false); }
   };
   return (
     <div className="space-y-4">
-      <SectionHeader icon={Search} title="Patient Search" desc="Find a patient and request consent to access their records" />
-      <Card className="space-y-3">
+      <SectionHeader icon={Search} title="Patient Search & Access Request" desc="Find a patient by Email or Patient ID and request consent to access their records" />
+      <Card className="space-y-4">
         <div>
-          <label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>PATIENT USER ID</label>
-          <div className="flex gap-2 mt-1">
-            <input className="mv-input mv-focusable" placeholder="Paste patient UUID..." value={patientId} onChange={e => setPatientId(e.target.value)} />
-            <button className="mv-btn mv-btn-primary" onClick={request} disabled={requesting || !patientId.trim()}>
+          <label className="text-xs font-semibold" style={{ color: "var(--text-faint)" }}>PATIENT IDENTIFIER (EMAIL OR UUID)</label>
+          <div className="flex gap-2 mt-1.5 flex-wrap sm:flex-nowrap">
+            <input className="mv-input mv-focusable flex-1" placeholder="e.g. patient@example.com or patient UUID..." value={patientId} onChange={e => setPatientId(e.target.value)} />
+            <select className="mv-input mv-focusable w-auto" value={resourceType} onChange={e => setResourceType(e.target.value)}>
+              <option value="all">All Records (all)</option>
+              <option value="prescriptions">Prescriptions</option>
+              <option value="lab_reports">Lab Reports</option>
+              <option value="vitals">Vital Signs</option>
+            </select>
+            <button className="mv-btn mv-btn-primary whitespace-nowrap" onClick={request} disabled={requesting || !patientId.trim()}>
               <Inbox size={14} /> {requesting ? "Sending..." : "Request Consent"}
             </button>
           </div>
         </div>
-        {done && <div className="mv-chip green"><Check size={11} /> Consent request sent — awaiting patient approval.</div>}
-        {err && <div className="text-sm text-red-500">{err}</div>}
+
+        <div className="flex items-center gap-2 text-xs flex-wrap">
+          <span style={{ color: "var(--text-faint)" }}>Quick demo patients:</span>
+          <button type="button" className="mv-chip blue cursor-pointer hover:opacity-80" onClick={() => setPatientId("patient@example.com")}>
+            patient@example.com
+          </button>
+          <button type="button" className="mv-chip teal cursor-pointer hover:opacity-80" onClick={() => setPatientId("meenashreej@gmail.com")}>
+            meenashreej@gmail.com
+          </button>
+        </div>
+
+        {done && <div className="mv-chip green"><Check size={11} /> Consent request successfully dispatched to patient dashboard!</div>}
+        {err && <div className="text-sm text-red-500 p-2 rounded-lg bg-red-500/10 border border-red-500/20">{err}</div>}
       </Card>
     </div>
   );
