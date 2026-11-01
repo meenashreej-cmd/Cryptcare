@@ -1720,7 +1720,12 @@ const CreatePrescriptionView = () => {
       await vaultService.createPrescription(payload);
       setSigned(true);
     } catch (err) {
-      setError(err.response?.data?.detail || "Failed to create prescription. Check patient ID.");
+      const detail = err.response?.data?.detail;
+      if (detail && (detail.includes("is not permitted") || detail.includes("Forbidden"))) {
+        setError(`${detail}. Multi-tab session mismatch: another tab changed your active account. Please refresh this page or re-login as Doctor.`);
+      } else {
+        setError(detail || "Failed to create prescription. Check patient ID.");
+      }
     } finally {
       setLoading(false);
     }
@@ -3828,6 +3833,31 @@ export default function CryptcareApp() {
     if (params.get("token")) {
       setAuthView("login");
     }
+  }, []);
+
+  useEffect(() => {
+    const handleStorageChange = async (e) => {
+      if (e.key === 'access_token') {
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+          setCurrentUser(null);
+          setAuthView("landing");
+        } else {
+          try {
+            const me = await authService.getMe();
+            setCurrentUser(me);
+            setNav("overview");
+          } catch (err) {
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+            setCurrentUser(null);
+            setAuthView("landing");
+          }
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
   useEffect(() => {

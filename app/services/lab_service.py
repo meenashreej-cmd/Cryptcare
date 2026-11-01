@@ -283,7 +283,7 @@ def get_lab_requests(
     if status_filter:
         query = query.filter(LabTestRequest.status == status_filter)
         
-    requests = query.order_by(LabTestRequest.created_at.desc()).offset(skip).limit(limit).all()
+    requests = query.order_by(LabTestRequest.requested_at.desc()).offset(skip).limit(limit).all()
     
     _write_access_log(db, current_user.id, "lab_test_requests_queue", None, AccessActionEnum.READ)
     db.commit()
@@ -294,7 +294,7 @@ def get_lab_requests(
             "patient_id": r.patient_id,
             "test_name": r.test_name,
             "status": r.status,
-            "created_at": r.created_at
+            "created_at": r.requested_at
         }
         for r in requests
     ]
