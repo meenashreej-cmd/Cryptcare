@@ -97,13 +97,9 @@ export default function LoginPage({
         setIsMfaStep(false);
         setMfaEnrollPreauth(null);
         setPatientPreauthToken(response.preauth_token || null);
-        setOtpCode(response.dev_otp || "");
+        setOtpCode("");
         setError("");
-        setInfoMessage(
-          response.dev_otp
-            ? `Verification code: ${response.dev_otp} (Auto-filled)`
-            : "Verification code sent to your email. Please enter the 6-digit code below."
-        );
+        setInfoMessage("Verification code sent to your email. Please enter the 6-digit code below.");
       } else if (response.requires_mfa_enrollment) {
         setNeedsOtp(true);
         setIsMfaStep(true);
@@ -558,6 +554,38 @@ export default function LoginPage({
                     >
                       <span>👩‍⚕️ Nurse</span>
                       <span className="text-[9px] bg-emerald-200/80 px-1 py-0.5 rounded font-mono font-bold">MFA</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fillDemoAccount("pharmacist@example.com")}
+                      className="p-2 rounded-xl bg-amber-50/70 hover:bg-amber-100/70 text-amber-800 font-medium text-left border border-amber-100 transition-colors flex items-center justify-between"
+                    >
+                      <span>💊 Pharmacist</span>
+                      <span className="text-[9px] bg-amber-200/80 px-1 py-0.5 rounded font-mono font-bold">MFA</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fillDemoAccount("lab@example.com")}
+                      className="p-2 rounded-xl bg-purple-50/70 hover:bg-purple-100/70 text-purple-800 font-medium text-left border border-purple-100 transition-colors flex items-center justify-between"
+                    >
+                      <span>🔬 Lab Tech</span>
+                      <span className="text-[9px] bg-purple-200/80 px-1 py-0.5 rounded font-mono font-bold">MFA</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fillDemoAccount("insurer@example.com")}
+                      className="p-2 rounded-xl bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-800 font-medium text-left border border-indigo-100 transition-colors flex items-center justify-between"
+                    >
+                      <span>🛡️ Insurer</span>
+                      <span className="text-[9px] bg-indigo-200/80 px-1 py-0.5 rounded font-mono font-bold">MFA</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fillDemoAccount("bloodbank@example.com")}
+                      className="p-2 rounded-xl bg-rose-50/70 hover:bg-rose-100/70 text-rose-800 font-medium text-left border border-rose-100 transition-colors flex items-center justify-between"
+                    >
+                      <span>🩸 Blood Bank</span>
+                      <span className="text-[9px] bg-rose-200/80 px-1 py-0.5 rounded font-mono font-bold">MFA</span>
                     </button>
                   </div>
                 )}

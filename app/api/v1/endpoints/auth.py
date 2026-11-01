@@ -64,7 +64,7 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         license_verified=license_verified,
         mfa_provisioning_uri=mfa_provisioning_uri,
         preauth_token=preauth_token,
-        dev_otp=dev_otp,
+        dev_otp=None,
     )
 
 
